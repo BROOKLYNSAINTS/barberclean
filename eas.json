@@ -1,0 +1,35 @@
+{
+  "cli": {
+    "version": ">= 13.0.0"
+  },
+  "build": {
+    "preview": {
+      "developmentClient": false,
+      "node": "20.19.4",
+      "channel": "staging",
+      "ios": {
+        "buildConfiguration": "Release"
+      }
+    },
+    "production": {
+      "developmentClient": false,
+      "node": "20.19.4",
+      "channel": "production",
+      "ios": {
+        "buildConfiguration": "Release"
+      },
+      "cache": {
+        "disabled": false
+      }
+    }
+  },
+  "submit": {
+    "production": {
+      "ios": {
+        "appleId": "coach@brooklynsaints.com",
+        "ascAppId": "6746369434",
+        "appleTeamId": "42G5N5JFV7"
+      }
+    }
+  }
+}
