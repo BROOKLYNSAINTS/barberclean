@@ -12,11 +12,13 @@ import {
   ScrollView,
   TouchableWithoutFeedback,
   Keyboard,
-  ActivityIndicator
+  ActivityIndicator,
+  Alert
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { auth, getCustomerAppointments } from '@/services/firebase';
+import { signOut } from 'firebase/auth';
 
 export default function IndexScreen() {
   const router = useRouter();
@@ -148,6 +150,32 @@ export default function IndexScreen() {
     }
   };
 
+  const handleLogout = () => {
+    Alert.alert(
+      'Logout',
+      'Are you sure you want to logout?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Logout',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await signOut(auth);
+              router.replace('/(auth)/login');
+            } catch (error) {
+              console.error('Error logging out:', error);
+              Alert.alert('Error', 'Failed to logout. Please try again.');
+            }
+          },
+        },
+      ],
+    );
+  };
+
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -208,6 +236,12 @@ export default function IndexScreen() {
                 <TouchableOpacity style={styles.button} onPress={handleSubmit}>
                   <Ionicons name="search" size={20} color="#fff" />
                   <Text style={styles.buttonText}>Search Barbers</Text>
+                </TouchableOpacity>
+                
+                {/* Logout Button */}
+                <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+                  <Ionicons name="log-out-outline" size={20} color="#f44336" />
+                  <Text style={styles.logoutButtonText}>Logout</Text>
                 </TouchableOpacity>
               </View>
             </>
@@ -324,6 +358,24 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     color: '#fff',
+    fontWeight: '600',
+    marginLeft: 8,
+    fontSize: 16,
+  },
+  logoutButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: '#f44336',
+    marginTop: 16,
+  },
+  logoutButtonText: {
+    color: '#f44336',
     fontWeight: '600',
     marginLeft: 8,
     fontSize: 16,

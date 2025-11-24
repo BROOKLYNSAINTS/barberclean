@@ -1,10 +1,13 @@
 import "dotenv/config";
 
+const androidIntentUrl =
+  'intent://dashboard?stripeConnectComplete=true#Intent;scheme=barber-clean;package=com.josephmurphy.barberclean;end';
+
 export default {
   expo: {
     name: "barber-clean",
     slug: "barber-clean",
-    version: "1.0.1",
+    version: "1.0.4",
     scheme: "barber-clean",
     orientation: "portrait",
     icon: "./assets/icon512.png",
@@ -24,7 +27,9 @@ export default {
         measurementId: process.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID,
       },
       stripePublishableKey: process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY,
+      stripeSubscriptionPriceId: process.env.EXPO_PUBLIC_STRIPE_SUBSCRIPTION_PRICE_ID,
       backendUrl: process.env.EXPO_PUBLIC_BACKEND_URL,
+      OPENAI_API_KEY: process.env.OPENAI_API_KEY,
     
     },
     
@@ -32,34 +37,34 @@ export default {
         ITSAppUsesNonExemptEncryption: false
       },
     experiments: { tsconfigPaths: true },
-    splash: {
-      image: "./assets/icon512.png",
-      resizeMode: "contain",
-      backgroundColor: "#ffffff",
-    },
-    ios: {
-      bundleIdentifier: "com.ScheduleSync.barber",
-      buildNumber: "184",
-      supportsTablet: true,
-      infoPlist: {
-        ITSAppUsesNonExemptEncryption: false,
-        NSUserTrackingUsageDescription: "This app uses tracking to improve your experience.",
-        NSCameraUsageDescription: "Camera is used for profile photos.",
-        NSMicrophoneUsageDescription: "Microphone is used for voice and speech features.",
-        NSSpeechRecognitionUsageDescription: "Speech recognition is used to convert your voice to text.",
-        NSPhotoLibraryUsageDescription: "Photo library is used to pick profile or appointment photos.",
-        NSCalendarsUsageDescription: "Calendar access is used to add appointments.",
-        NSRemindersUsageDescription: "Reminders are used for appointment notifications."
-      },
-        },
+    plugins: [
+      [
+        "@stripe/stripe-react-native",
+        {
+          merchantIdentifier: "",
+          enableGooglePay: true
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          icon: "./assets/icon512.png",
+          color: "#ffffff",
+          sounds: []
+        }
+      ],
+      [
+        "expo-calendar",
+        {
+          calendarPermission: "The app needs to access your calendar to schedule appointment reminders."
+        }
+      ]
+    ],
     android: {
-      adaptiveIcon: {
-        foregroundImage: "./assets/icon512.png",
-        backgroundColor: "#ffffff",
-      },
-      edgeToEdgeEnabled: true,
+      package: "com.ScheduleSync.barber",
+      versionCode: 27,
     },
-    runtimeVersion: { policy: "appVersion" },
+    runtimeVersion: "1.0.4",
     updates: {
       enabled: false,
       checkAutomatically: "NEVER",

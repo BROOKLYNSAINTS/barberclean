@@ -14,10 +14,31 @@ export default function ChatAssistantScreen() {
 
     const userMsg = { sender: 'user', text: input };
     setChatLog(prev => [...prev, userMsg]);
-
-    const botReply = await generateChatResponse(input);
-    setChatLog(prev => [...prev, { sender: 'bot', text: botReply }]);
     setInput('');
+
+    try {
+      const result = await generateChatResponse(input);
+
+      if (!result?.success) {
+        const errorText = result?.error || 'Sorry, I had trouble answering that.';
+        setChatLog(prev => [
+          ...prev,
+          { sender: 'bot', text: errorText },
+        ]);
+      } else {
+        setChatLog(prev => [
+          ...prev,
+          { sender: 'bot', text: result.text },
+        ]);
+      }
+    } catch (e) {
+      console.error('Chat assistant error:', e);
+      setChatLog(prev => [
+        ...prev,
+        { sender: 'bot', text: 'Something went wrong talking to the assistant.' },
+      ]);
+    }
+
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
   };
 

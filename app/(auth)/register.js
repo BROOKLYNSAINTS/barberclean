@@ -33,7 +33,7 @@ const RegisterScreen = () => {
       });
       
       // Navigate to profile setup
-      router.push({ pathname: '(auth)/profile-setup', params: { userId: user.uid } });
+      router.push({ pathname: '(auth)/profile-setup', params: { userId: user.uid, email: email } });
     } catch (error) {
       console.error('Registration error:', error);
       setError(error.message);

@@ -1,24 +1,24 @@
-import { Platform } from 'react-native';
-// import { initStripe, useStripe, initPaymentSheet, presentPaymentSheet } from '@stripe/stripe-react-native';
-// import { StripeProvider } from '@stripe/stripe-react-native';
+import { Platform, Linking } from 'react-native';
 import { initStripe, useStripe } from '@stripe/stripe-react-native';
-const { initPaymentSheet, presentPaymentSheet } = useStripe();
-
 import Constants from 'expo-constants';
 import { db } from '@/services/firebase';
 import { doc, setDoc, getDoc, updateDoc, collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
 
 const extra = Constants.expoConfig?.extra;
- 
-// Get Stripe publishable key from environment
-const STRIPE_PUBLISHABLE_KEY = extra?.stripePublishableKey
-console.log("me: ",STRIPE_PUBLISHABLE_KEY);
+
+// Get Stripe publishable key from environment (EAS) or extra fallback
+const STRIPE_PUBLISHABLE_KEY =
+  process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY || extra?.stripePublishableKey;
+console.log('me (STRIPE_PUBLISHABLE_KEY):', STRIPE_PUBLISHABLE_KEY);
 
 // Debug logging
 console.log('🔑 Stripe Configuration Check:');
-console.log('- process.env.STRIPE_PUBLISHABLE_KEY:', !!process.env.STRIPE_PUBLISHABLE_KEY);
-console.log('- Constants.expoConfig?.extra?.STRIPE_PUBLISHABLE_KEY:', !!Constants.expoConfig?.extra?.STRIPE_PUBLISHABLE_KEY);
+console.log(
+  '- process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY:',
+  !!process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY
+);
+console.log('- Constants.expoConfig?.extra?.stripePublishableKey:', !!extra?.stripePublishableKey);
 console.log('- Final STRIPE_PUBLISHABLE_KEY loaded:', !!STRIPE_PUBLISHABLE_KEY);
 console.log('- Key starts with pk_test:', STRIPE_PUBLISHABLE_KEY?.startsWith('pk_test'));
 console.log('- Key length:', STRIPE_PUBLISHABLE_KEY?.length);
@@ -44,23 +44,34 @@ export const initializeStripe = async () => {
 };
 
 // Create PaymentIntent via backend
-const createPaymentIntent = async (amount, description, metadata) => {
+const createPaymentIntent = async (amount, description, metadata, customerEmail = null) => {
   try {
-    const BACKEND_URL = 'https://barber-backend-ten.vercel.app';
+    const BACKEND_URL = extra?.backendUrl || process.env.EXPO_PUBLIC_BACKEND_URL;
     
     console.log('🔧 Calling backend to create payment intent...');
+    console.log('🔧 Backend URL:', BACKEND_URL);
+    console.log('🔧 Amount:', amount, 'Description:', description);
+    console.log('🔧 Metadata:', metadata);
+    console.log('🔧 Customer Email:', customerEmail);
+    
+    const requestBody = {
+      amount: amount, // Send $20 as 20, let backend convert to cents
+      currency: 'usd',
+      description,
+      metadata,
+    };
+    
+    // Add customer_email if provided
+    if (customerEmail) {
+      requestBody.customer_email = customerEmail;
+    }
     
     const response = await fetch(`${BACKEND_URL}/api/create-payment-intent`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        amount: amount, // Send $20 as 20, let backend convert to cents
-        currency: 'usd',
-        description,
-        metadata,
-      }),
+      body: JSON.stringify(requestBody),
     });
     
     const data = await response.json();
@@ -71,7 +82,22 @@ const createPaymentIntent = async (amount, description, metadata) => {
     }
     
     console.log('✅ Payment intent created successfully:', data.paymentIntentId);
-    return data;
+    console.log('🔍 clientSecret exists:', !!data.clientSecret);
+    console.log('🔍 ephemeralKey exists:', !!data.ephemeralKey);
+    console.log('🔍 customer exists:', !!data.customer);
+    console.log('🔍 ephemeralKey type:', typeof data.ephemeralKey);
+    console.log('🔍 customer type:', typeof data.customer);
+    
+    // Extract the actual values we need
+    const result = {
+      clientSecret: data.clientSecret,
+      ephemeralKey: typeof data.ephemeralKey === 'string' ? data.ephemeralKey : data.ephemeralKey?.secret,
+      customer: typeof data.customer === 'string' ? data.customer : data.customer?.id,
+      paymentIntentId: data.paymentIntentId
+    };
+    
+    console.log('🔍 Extracted values:', result);
+    return result;
     
   } catch (error) {
     console.error('Error calling backend:', error);
@@ -79,10 +105,67 @@ const createPaymentIntent = async (amount, description, metadata) => {
   }
 };
 
+// Create Stripe Connect account for barber
+const createConnectAccount = async (userId, email) => {
+  try {
+    const BACKEND_URL = extra?.backendUrl || process.env.EXPO_PUBLIC_BACKEND_URL;
+    
+    console.log('🔗 Creating Stripe Connect account for barber...');
+    console.log('🔗 Backend URL:', BACKEND_URL);
+    console.log('🔗 User ID:', userId, 'Email:', email);
+    console.log('🔗 Full URL:', `${BACKEND_URL}/api/create-connect-account`);
+    
+    const requestBody = {
+      userId,
+      email,
+      businessType: 'individual'
+    };
+    console.log('🔗 Request body:', JSON.stringify(requestBody));
+    
+    const response = await fetch(`${BACKEND_URL}/api/create-connect-account`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+    });
+    
+    console.log('🔗 Response status:', response.status);
+    console.log('🔗 Response ok:', response.ok);
+    console.log('🔗 Response headers:', JSON.stringify([...response.headers]));
+    
+    const responseText = await response.text();
+    console.log('🔗 Raw response text:', responseText);
+    
+    let data;
+    try {
+      data = JSON.parse(responseText);
+      console.log('🔗 Parsed response data:', JSON.stringify(data));
+    } catch (parseError) {
+      console.error('🔗 Failed to parse response as JSON:', parseError);
+      throw new Error('Invalid response from backend: ' + responseText);
+    }
+    
+    if (!response.ok) {
+      console.error('Backend error:', data);
+      throw new Error(data.error || 'Failed to create Connect account');
+    }
+    
+    console.log('✅ Connect account created:', data.accountId);
+    return data;
+    
+  } catch (error) {
+    console.error('Error creating Connect account:', error);
+    throw new Error('Failed to create Connect account');
+  }
+};
+
 // Create and present payment sheet for service payment
-export const createAndPresentServicePaymentSheet = async (userId, barberId, appointmentId, amount, description = 'Barber Service') => {
+export const createAndPresentServicePaymentSheet = async (stripeHook, userId, barberId, appointmentId, amount, description = 'Barber Service') => {
   try {
     console.log('🏦 Creating payment intent for service payment...', { amount, appointmentId });
+    
+    const { initPaymentSheet, presentPaymentSheet } = stripeHook;
     
     // Step 1: Call backend to create PaymentIntent
     const paymentIntentResponse = await createPaymentIntent(amount, description, {
@@ -177,16 +260,18 @@ export const createAndPresentServicePaymentSheet = async (userId, barberId, appo
 };
 
 // Create subscription with setup intent for future payments
-export const createSubscriptionPaymentSheet = async (userId, priceId) => {
+export const createSubscriptionPaymentSheet = async (stripeHook, userId, priceId, userEmail) => {
   try {
     console.log('🔔 Creating subscription setup for user:', userId);
+    
+    const { initPaymentSheet, presentPaymentSheet } = stripeHook;
     
     // Step 1: Call backend to create PaymentIntent for subscription
     const paymentIntentResponse = await createPaymentIntent(30, 'Barber Subscription - First Month', {
       userId,
       type: 'subscription',
       priceId
-    });
+    }, userEmail);
     
     const { clientSecret, ephemeralKey, customer, paymentIntentId } = paymentIntentResponse;
     
@@ -223,57 +308,110 @@ export const createSubscriptionPaymentSheet = async (userId, priceId) => {
     console.log('💳 Subscription payment completed successfully!');
     
     const subscriptionId = 'sub_' + Date.now();
+    console.log('📝 Created subscription ID:', subscriptionId);
     
     // Create subscription payment record
-    const paymentRef = await addDoc(collection(db, 'payments'), {
-      customerId: userId,
-      subscriptionId,
-      amount: 30,
-      description: 'Barber Subscription - First Month',
-      type: 'subscription',
-      status: 'completed',
-      stripePaymentIntentId: paymentIntentId,
-      createdAt: serverTimestamp(),
-      paymentMethod: 'card'
-    });
+    console.log('📝 Step 1: Creating payment record in Firestore...');
+    let paymentRef;
+    try {
+      paymentRef = await addDoc(collection(db, 'payments'), {
+        customerId: userId,
+        subscriptionId,
+        amount: 30,
+        description: 'Barber Subscription - First Month',
+        type: 'subscription',
+        status: 'completed',
+        stripePaymentIntentId: paymentIntentId,
+        createdAt: serverTimestamp(),
+        paymentMethod: 'card'
+      });
+      console.log('✅ Payment record created:', paymentRef.id);
+    } catch (error) {
+      console.error('❌ Step 1 ERROR:', error.message);
+      console.error('❌ Step 1 ERROR CODE:', error.code);
+      throw error;
+    }
     
     // Record the subscription transaction
-    await addDoc(collection(db, 'transactions'), {
-      userId,
-      subscriptionId,
-      paymentId: paymentRef.id,
-      type: 'subscription_payment',
-      amount: 30,
-      description: 'Barber Subscription - First Month',
-      status: 'completed',
-      stripePaymentIntentId: paymentIntentId,
-      createdAt: serverTimestamp()
-    });
+    console.log('📝 Step 2: Creating transaction record in Firestore...');
+    try {
+      await addDoc(collection(db, 'transactions'), {
+        userId,
+        subscriptionId,
+        paymentId: paymentRef.id,
+        type: 'subscription_payment',
+        amount: 30,
+        description: 'Barber Subscription - First Month',
+        status: 'completed',
+        stripePaymentIntentId: paymentIntentId,
+        createdAt: serverTimestamp()
+      });
+      console.log('✅ Transaction record created');
+    } catch (error) {
+      console.error('❌ Step 2 ERROR:', error.message);
+      console.error('❌ Step 2 ERROR CODE:', error.code);
+      throw error;
+    }
     
     // Store subscription info in user document
+    console.log('📝 Step 3: Updating user document with subscription...');
     const userRef = doc(db, 'users', userId);
-    await updateDoc(userRef, {
-      subscription: {
-        status: 'active',
-        plan: 'barber_monthly',
-        subscriptionId,
-        stripePaymentIntentId: paymentIntentId,
-        startDate: new Date().toISOString(),
-        nextBillingDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days
-        amount: 30,
-        currency: 'usd',
-        priceId: priceId,
-        type: 'manual_billing'
-      },
-      updatedAt: serverTimestamp()
-    });
+    try {
+      await setDoc(userRef, {
+        subscription: {
+          status: 'active',
+          plan: 'barber_monthly',
+          subscriptionId,
+          stripePaymentIntentId: paymentIntentId,
+          startDate: new Date().toISOString(),
+          nextBillingDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days
+          amount: 30,
+          currency: 'usd',
+          priceId: priceId,
+          type: 'manual_billing'
+        },
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+      console.log('✅ User document updated');
+    } catch (error) {
+      console.error('❌ Step 3 ERROR:', error.message);
+      console.error('❌ Step 3 ERROR CODE:', error.code);
+      console.error('❌ Step 3 FULL ERROR:', JSON.stringify(error));
+      throw error;
+    }
     
     console.log('✅ Subscription stored in Firestore');
+    
+    // Step 5: Create Stripe Connect account for barber to receive payments
+    let connectAccountId = null;
+    let onboardingUrl = null;
+    
+    try {
+      console.log('🔗 Setting up Connect account for barber...');
+      const connectResponse = await createConnectAccount(userId, userEmail);
+      connectAccountId = connectResponse.accountId;
+      onboardingUrl = connectResponse.onboardingUrl;
+      
+      // Store Connect account ID in Firestore
+      await setDoc(userRef, {
+        'stripeConnectAccountId': connectAccountId,
+        'stripeConnectOnboardingComplete': false,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+      
+      console.log('✅ Connect account ID stored in Firestore');
+      
+    } catch (connectError) {
+      console.error('⚠️ Error creating Connect account (non-fatal):', connectError);
+      // Don't fail the whole flow if Connect fails
+    }
     
     return { 
       success: true, 
       subscriptionId,
-      paymentIntentId: paymentIntentId
+      paymentIntentId: paymentIntentId,
+      connectAccountId,
+      onboardingUrl
     };
     
   } catch (error) {
@@ -354,11 +492,15 @@ export const getAppointmentPaymentStatus = async (appointmentId) => {
   }
 };
 
+// Export useStripe hook for components to use
+export { useStripe };
+
 export default {
   initializeStripe,
   createSubscriptionPaymentSheet,
   createTipPaymentSheet,
   createAndPresentServicePaymentSheet,
   getSubscriptionStatus,
-  getAppointmentPaymentStatus
+  getAppointmentPaymentStatus,
+  useStripe
 };

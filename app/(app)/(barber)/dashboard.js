@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, ActivityIndicator, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { getBarberAppointments, getUserProfile, auth } from '@/services/firebase';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { createDummyAppointments } from "@/utils/test";
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'; // Add this import
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { signOut } from 'firebase/auth';
 
 const BarberDashboardScreen = () => {
   const router = useRouter();
@@ -96,6 +97,32 @@ const BarberDashboardScreen = () => {
     return dateObj.toLocaleDateString(undefined, options);
   };
 
+  const handleLogout = () => {
+    Alert.alert(
+      'Logout',
+      'Are you sure you want to logout?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Logout',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await signOut(auth);
+              router.replace('/(auth)/login');
+            } catch (error) {
+              console.error('Error logging out:', error);
+              Alert.alert('Error', 'Failed to logout. Please try again.');
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const renderAppointmentItem = ({ item }) => (
     <TouchableOpacity 
       style={styles.appointmentCard}
@@ -148,22 +175,26 @@ const BarberDashboardScreen = () => {
   return (
     <SafeAreaView style={styles.container}>
       <View style={[styles.header, { paddingTop: insets.top > 0 ? 0 : 20 }]}>
-        <Text style={styles.welcomeText}>Welcome, {profile?.name || 'Barber'}</Text>
-        
-        {profile?.subscription?.status === 'active' ? (
-          <View style={styles.subscriptionActive}>
-            <Ionicons name="checkmark-circle" size={16} color="#4CAF50" />
-            <Text style={styles.subscriptionActiveText}>Subscription Active</Text>
-          </View>
-        ) : (
-          <TouchableOpacity 
-            style={styles.subscriptionInactive}
-            onPress={() => router.push('/(app)/(barber)/subscription-payment')}
-          >
-            <Ionicons name="alert-circle" size={16} color="#f44336" />
-            <Text style={styles.subscriptionInactiveText}>Subscription Inactive</Text>
-          </TouchableOpacity>
-        )}
+        <View style={styles.headerLeft}>
+          <Text style={styles.welcomeText}>Welcome, {profile?.name || 'Barber'}</Text>
+          {profile?.subscription?.status === 'active' ? (
+            <View style={styles.subscriptionActive}>
+              <Ionicons name="checkmark-circle" size={16} color="#4CAF50" />
+              <Text style={styles.subscriptionActiveText}>Subscription Active</Text>
+            </View>
+          ) : (
+            <TouchableOpacity 
+              style={styles.subscriptionInactive}
+              onPress={() => router.push('/(app)/(barber)/subscription-payment')}
+            >
+              <Ionicons name="alert-circle" size={16} color="#f44336" />
+              <Text style={styles.subscriptionInactiveText}>Subscription Inactive</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+        <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
+          <Ionicons name="log-out-outline" size={24} color="#f44336" />
+        </TouchableOpacity>
       </View>
 
       <View style={styles.statsContainer}>
@@ -338,10 +369,18 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#ddd',
   },
+  headerLeft: {
+    flex: 1,
+  },
+  logoutButton: {
+    padding: 8,
+    marginLeft: 8,
+  },
   welcomeText: {
     fontSize: 18,
     fontWeight: '600',
     color: '#333',
+    marginBottom: 8,
   },
   subscriptionActive: {
     flexDirection: 'row',
