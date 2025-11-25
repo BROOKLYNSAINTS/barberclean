@@ -174,152 +174,116 @@ const BarberDashboardScreen = () => {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={[styles.header, { paddingTop: insets.top > 0 ? 0 : 20 }]}>
-        <View style={styles.headerLeft}>
-          <Text style={styles.welcomeText}>Welcome, {profile?.name || 'Barber'}</Text>
-          {profile?.subscription?.status === 'active' ? (
-            <View style={styles.subscriptionActive}>
-              <Ionicons name="checkmark-circle" size={16} color="#4CAF50" />
-              <Text style={styles.subscriptionActiveText}>Subscription Active</Text>
-            </View>
-          ) : (
-            <TouchableOpacity 
-              style={styles.subscriptionInactive}
-              onPress={() => router.push('/(app)/(barber)/subscription-payment')}
-            >
-              <Ionicons name="alert-circle" size={16} color="#f44336" />
-              <Text style={styles.subscriptionInactiveText}>Subscription Inactive</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-        <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
-          <Ionicons name="log-out-outline" size={24} color="#f44336" />
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.statsContainer}>
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>{todayAppointments.length}</Text>
-          <Text style={styles.statLabel}>Today</Text>
-        </View>
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>{upcomingAppointments.length}</Text>
-          <Text style={styles.statLabel}>Upcoming (Next 5)</Text>
-        </View>
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>{appointments.length}</Text>
-          <Text style={styles.statLabel}>Total Booked</Text>
-        </View>
-      </View>
-
-      {/* Show a special message if the barber has no appointments at all */}
-      {appointments.length === 0 && !loading && !error && (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>You have no appointments yet. Share your booking link or set up your services to get started!</Text>
-        </View>
-      )}
-
-      <FlatList
-        data={null} // To render sections in ListHeaderComponent and ListFooterComponent
-        ListHeaderComponent={
-          <>
-            <View style={styles.sectionContainer}>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Today's Appointments</Text>
-                {todayAppointments.length > 0 && 
-                  <TouchableOpacity onPress={() => router.push('/(app)/(barber)/all-appointments?filter=today')}>
-                    <Text style={styles.seeAllText}>See All</Text>
-                  </TouchableOpacity>
-                }
+      <>
+        <View style={[styles.header, { paddingTop: insets.top > 0 ? 0 : 20 }]}>
+          <View style={styles.headerLeft}>
+            <Text style={styles.welcomeText}>Welcome, {profile?.name || 'Barber'}</Text>
+            {profile?.subscription?.status === 'active' ? (
+              <View style={styles.subscriptionActive}>
+                <Ionicons name="checkmark-circle" size={16} color="#4CAF50" />
+                <Text style={styles.subscriptionActiveText}>Subscription Active</Text>
               </View>
-              {todayAppointments.length > 0 ? (
-                <FlatList
-                  data={todayAppointments}
-                  renderItem={renderAppointmentItem}
-                  keyExtractor={(item) => item.id.toString() + "-today"}
-                  scrollEnabled={false}
-                />
-              ) : (
-                <View style={styles.emptyContainer}>
-                  <Text style={styles.emptyText}>No appointments scheduled for today.</Text>
-                </View>
-              )}
-            </View>
+            ) : (
+              <TouchableOpacity 
+                style={styles.subscriptionInactive}
+                onPress={() => router.push('/(app)/(barber)/subscription-payment')}
+              >
+                <Ionicons name="alert-circle" size={16} color="#f44336" />
+                <Text style={styles.subscriptionInactiveText}>Subscription Inactive</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
+            <Ionicons name="log-out-outline" size={18} color="#f44336" />
+            <Text style={styles.logoutText}>Logout</Text>
+          </TouchableOpacity>
+        </View>
 
-            <View style={styles.sectionContainer}>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Upcoming Appointments</Text>
-                 {upcomingAppointments.length > 0 && 
-                  <TouchableOpacity onPress={() => router.push('/(app)/(barber)/all-appointments?filter=upcoming')}>
-                    <Text style={styles.seeAllText}>See All</Text>
-                  </TouchableOpacity>
-                }
-              </View>
-              {upcomingAppointments.length > 0 ? (
-                <FlatList
-                  data={upcomingAppointments}
-                  renderItem={renderAppointmentItem}
-                  keyExtractor={(item) => item.id.toString() + "-upcoming"}
-                  scrollEnabled={false}
-                />
-              ) : (
-                <View style={styles.emptyContainer}>
-                  <Text style={styles.emptyText}>No upcoming appointments.</Text>
-                </View>
-              )}
-            </View>
-          </>
-        }
-        ListFooterComponentStyle={{paddingBottom: 20}}
-        ListFooterComponent={
-          <>
-            <View style={styles.actionButtonsContainer}>
-              <TouchableOpacity 
-                style={styles.actionButton}
-                onPress={() => router.push('/(app)/(barber)/manage-services')}
-              >
-                <Ionicons name="list-outline" size={24} color="#fff" />
-                <Text style={styles.actionButtonText}>Manage Services</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={styles.actionButton}
-                onPress={() => router.push('/(app)/(barber)/availability')}
-              >
-                <Ionicons name="calendar-outline" size={24} color="#fff" />
-                <Text style={styles.actionButtonText}>Set Availability</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={{ paddingHorizontal: 12, paddingTop: 10, paddingBottom: 20 }}>
-              <TouchableOpacity
-                onPress={async () => {
-                  const uid = auth.currentUser?.uid;
-                  if (!uid) return;
-                  try {
-                    await createDummyAppointments(uid);
-                  } catch (err) {
-                    console.error('❌ Failed to add appointments:', err);
+        <Text style={{ fontSize: 12, color: '#777' }}>
+          Use the red button to logout
+        </Text>
+
+        <View style={styles.statsContainer}>
+          <View style={styles.statCard}>
+            <Text style={styles.statValue}>{todayAppointments.length}</Text>
+            <Text style={styles.statLabel}>Today</Text>
+          </View>
+          <View style={styles.statCard}>
+            <Text style={styles.statValue}>{upcomingAppointments.length}</Text>
+            <Text style={styles.statLabel}>Upcoming (Next 5)</Text>
+          </View>
+          <View style={styles.statCard}>
+            <Text style={styles.statValue}>{appointments.length}</Text>
+            <Text style={styles.statLabel}>Total Booked</Text>
+          </View>
+        </View>
+
+        {/* Show a special message if the barber has no appointments at all */}
+        {appointments.length === 0 && !loading && !error && (
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyText}>You have no appointments yet. Share your booking link or set up your services to get started!</Text>
+          </View>
+        )}
+
+        <FlatList
+          data={null} // To render sections in ListHeaderComponent and ListFooterComponent
+          ListHeaderComponent={
+            <>
+              <View style={styles.sectionContainer}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>Today's Appointments</Text>
+                  {todayAppointments.length > 0 && 
+                    <TouchableOpacity onPress={() => router.push('/(app)/(barber)/all-appointments?filter=today')}>
+                      <Text style={styles.seeAllText}>See All</Text>
+                    </TouchableOpacity>
                   }
-                }}
-                style={{
-                  backgroundColor: '#4CAF50',
-                  paddingVertical: 12,
-                  borderRadius: 8,
-                  alignItems: 'center',
-                  shadowColor: '#000',
-                  shadowOffset: { width: 0, height: 2 },
-                  shadowOpacity: 0.1,
-                  shadowRadius: 3,
-                  elevation: 3,
-                }}
-              >
-                <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>
-                  Create Dummy Appointments
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </>
-        }
-      />
+                </View>
+                {todayAppointments.length > 0 ? (
+                  <FlatList
+                    data={todayAppointments}
+                    renderItem={renderAppointmentItem}
+                    keyExtractor={(item) => item.id.toString() + "-today"}
+                    scrollEnabled={false}
+                  />
+                ) : (
+                  <View style={styles.emptyContainer}>
+                    <Text style={styles.emptyText}>No appointments scheduled for today.</Text>
+                  </View>
+                )}
+              </View>
+
+              <View style={styles.sectionContainer}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>Upcoming Appointments</Text>
+                   {upcomingAppointments.length > 0 && 
+                    <TouchableOpacity onPress={() => router.push('/(app)/(barber)/all-appointments?filter=upcoming')}>
+                      <Text style={styles.seeAllText}>See All</Text>
+                    </TouchableOpacity>
+                  }
+                </View>
+                {upcomingAppointments.length > 0 ? (
+                  <FlatList
+                    data={upcomingAppointments}
+                    renderItem={renderAppointmentItem}
+                    keyExtractor={(item) => item.id.toString() + "-upcoming"}
+                    scrollEnabled={false}
+                  />
+                ) : (
+                  <View style={styles.emptyContainer}>
+                    <Text style={styles.emptyText}>No upcoming appointments.</Text>
+                  </View>
+                )}
+              </View>
+            </>
+          }
+          ListFooterComponentStyle={{paddingBottom: 20}}
+          ListFooterComponent={
+            <>
+              <View style={{ height: 20 }} />
+            </>
+          }
+        />
+      </>
     </SafeAreaView>
   );
 };
@@ -373,8 +337,21 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   logoutButton: {
-    padding: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#f44336',
+    backgroundColor: '#fff5f5',
     marginLeft: 8,
+  },
+  logoutText: {
+    marginLeft: 6,
+    color: '#f44336',
+    fontWeight: '600',
+    fontSize: 14,
   },
   welcomeText: {
     fontSize: 18,
@@ -524,36 +501,6 @@ const styles = StyleSheet.create({
   appointmentAction: {
     justifyContent: 'center',
     paddingLeft: 10,
-  },
-  actionButtonsContainer: {
-    flexDirection: 'row',
-    paddingHorizontal: 12,
-    paddingVertical: 16, // Added vertical padding
-    borderTopWidth: 1, // Added border top
-    borderTopColor: '#e0e0e0', // Border color
-    backgroundColor: '#fff', // Background for the button container
-  },
-  actionButton: {
-    flex: 1,
-    flexDirection: 'row',
-    backgroundColor: '#2196F3',
-    paddingVertical: 12,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginHorizontal: 4,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 3,
-  },
-  actionButtonText: {
-    color: '#fff',
-    fontWeight: '600',
-    marginLeft: 8,
-    fontSize: 14,
   },
 });
 

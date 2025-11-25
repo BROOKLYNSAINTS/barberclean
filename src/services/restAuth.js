@@ -1,7 +1,7 @@
 import axios from 'axios';
 import Constants from 'expo-constants';
 const EXTRA = Constants.expoConfig?.extra ?? {};
-const FIREBASE_API_KEY = EXTRA.FIREBASE_API_KEY;
+const FIREBASE_API_KEY = EXTRA.firebase?.apiKey; // <-- correct path
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { Alert } from 'react-native';
 import { auth } from './firebase';
@@ -10,8 +10,18 @@ const FIREBASE_AUTH_URL = `https://identitytoolkit.googleapis.com/v1/accounts`;
 console.log('🔑 Firebase API Key:', FIREBASE_API_KEY);
 
 export const loginWithEmail = async (email, password) => {
-  const userCredential = await signInWithEmailAndPassword(auth, email, password);
-  return userCredential.user;
+  try {
+    console.log('📤 loginWithEmail called with:', email);
+    const userCredential = await signInWithEmailAndPassword(auth, email, password);
+    console.log('✅ Firebase login success:', userCredential.user?.uid);
+    return userCredential.user;
+  } catch (error) {
+    console.log('❌ Firebase login FAILED');
+    console.log('   code:', error.code);
+    console.log('   message:', error.message);
+    console.log('   full error:', JSON.stringify(error, null, 2));
+    throw error;
+  }
 };
 
 /*export const loginWithEmail = async (email, password) => {

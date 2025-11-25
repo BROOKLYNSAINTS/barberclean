@@ -8,7 +8,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 //export { BarberTabLayout as default } from '../../RootLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'expo-router';
-import { Text, StyleSheet } from 'react-native';
+import { Text, StyleSheet, View, TouchableOpacity } from 'react-native';
 
 const styles = StyleSheet.create({
   welcomeText: {
@@ -20,9 +20,12 @@ const styles = StyleSheet.create({
 });
 
 export default function BarberTabLayout() {
+  const router = useRouter();
+  const { auth } = useAuth();
+
   return (
     <>
-      <Text style={styles.welcomeText}>Barber Dashboard V3</Text>
+      <Text style={styles.welcomeText}> Dashboard </Text>
       <Tabs
         screenOptions={{
           headerShown: false,
@@ -105,8 +108,9 @@ export default function BarberTabLayout() {
         <Tabs.Screen name="bulletin-post-details" options={{ href: null, title: 'Post Details' }} />
         <Tabs.Screen name="subscription" options={{ href: null, title: 'Subscription' }} />
         <Tabs.Screen name="chat" options={{ href: null, title: 'chat' }} />
-        <Tabs.Screen name="view profile" options={{ href: null, title: 'view profile' }} />
+        <Tabs.Screen name="view-barber-profile" options={{ href: null, title: 'view profile' }} />
         <Tabs.Screen name="subscription-payment" options={{ href: null, title: 'Payment' }} />
+        <Tabs.Screen name="new-chat" options={{ href: null, title: 'new chat' }} />
       </Tabs>
     </>
   );
