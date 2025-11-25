@@ -24,9 +24,7 @@ export default function BarberTabLayout() {
   const { auth } = useAuth();
 
   return (
-    <>
-      <Text style={styles.welcomeText}> Dashboard </Text>
-      <Tabs
+    <Tabs
         screenOptions={{
           headerShown: false,
           tabBarActiveTintColor: theme.colors.primary,
@@ -112,7 +110,6 @@ export default function BarberTabLayout() {
         <Tabs.Screen name="subscription-payment" options={{ href: null, title: 'Payment' }} />
         <Tabs.Screen name="new-chat" options={{ href: null, title: 'new chat' }} />
       </Tabs>
-    </>
   );
 }
 

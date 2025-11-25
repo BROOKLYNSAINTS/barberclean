@@ -55,10 +55,8 @@ export default function ChatListScreen() {
         data={threads}
         keyExtractor={item => item.id}
         renderItem={({ item }) => {
-          // Find the other barber's info (not the current user)
-          const otherBarber = item.participantsInfo?.find(
-            b => b.id !== auth.currentUser?.uid
-          );
+          const currentId = auth.currentUser?.uid;
+          const otherBarber = item.participantsInfo?.find(b => b.id !== currentId);
           return (
             <TouchableOpacity
               style={{

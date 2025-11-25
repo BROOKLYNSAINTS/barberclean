@@ -450,6 +450,11 @@ export async function getRecentAppointmentsForUser(userId, count = 3) {
   });
 }
 
+export async function updateBarberService(barberId, serviceId, data) {
+  const serviceRef = doc(db, 'users', barberId, 'services', serviceId);
+  await updateDoc(serviceRef, data);
+}
+
 export {
   app,
   auth,

@@ -1,13 +1,36 @@
-import React, { useState, useRef } from 'react';
-import { View, TextInput, Button, Text, ScrollView, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
+import React, { useState, useRef, useEffect } from 'react';
+import { View, TextInput, Button, Text, ScrollView, StyleSheet, KeyboardAvoidingView, Platform, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { generateChatResponse } from '@/services/openai';
-import Speech from 'expo-speech'; // Ensure you have this package installed 
+import * as Speech from 'expo-speech';
+import * as SpeechRecognition from 'expo-speech';
+
+const promptPrefix =
+  "You are a friendly assistant helping a barber manage and grow their barber business. Answer clearly and practically. ";
 
 export default function ChatAssistantScreen() {
   const [input, setInput] = useState('');
   const [chatLog, setChatLog] = useState([]);
+  const [isListening, setIsListening] = useState(false);
   const scrollRef = useRef();
+
+  useEffect(() => {
+    const greeting =
+      "Hi! I'm your AI assistant. I can help you manage your barber business, answer questions about appointments, services, and marketing. How can I help you today?";
+    setChatLog([{ sender: 'bot', text: greeting }]);
+    Speech.speak(greeting, {
+      language: 'en-US',
+      pitch: 1.0,
+      rate: 1.0,
+    });
+  }, []);
+
+  const handleMicPress = async () => {
+    // Placeholder: Expo does not have built-in speech-to-text; this is where
+    // you would hook up your Google or native STT and then setInput(transcript).
+    // For now, just toggle a visual state so the button can be wired later.
+    setIsListening(prev => !prev);
+  };
 
   const sendMessage = async () => {
     if (!input.trim()) return;
@@ -17,19 +40,18 @@ export default function ChatAssistantScreen() {
     setInput('');
 
     try {
-      const result = await generateChatResponse(input);
+      const result = await generateChatResponse(promptPrefix + input);
 
       if (!result?.success) {
         const errorText = result?.error || 'Sorry, I had trouble answering that.';
-        setChatLog(prev => [
-          ...prev,
-          { sender: 'bot', text: errorText },
-        ]);
+        const botMsg = { sender: 'bot', text: errorText };
+        setChatLog(prev => [...prev, botMsg]);
+        Speech.speak(errorText, { language: 'en-US', pitch: 1.0, rate: 1.0 });
       } else {
-        setChatLog(prev => [
-          ...prev,
-          { sender: 'bot', text: result.text },
-        ]);
+        const reply = result.text;
+        const botMsg = { sender: 'bot', text: reply };
+        setChatLog(prev => [...prev, botMsg]);
+        Speech.speak(reply, { language: 'en-US', pitch: 1.0, rate: 1.0 });
       }
     } catch (e) {
       console.error('Chat assistant error:', e);
@@ -72,6 +94,12 @@ export default function ChatAssistantScreen() {
             style={styles.input}
           />
           <Button title="Send" onPress={sendMessage} />
+          <TouchableOpacity
+            onPress={handleMicPress}
+            style={[styles.micButton, isListening && styles.micActive]}
+          >
+            <Text style={{ fontSize: 20 }}>{isListening ? '🔴' : '🎤'}</Text>
+          </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -109,5 +137,13 @@ const styles = StyleSheet.create({
     padding: 10,
     borderRadius: 5,
     marginRight: 8,
+  },
+  micButton: {
+    padding: 10,
+    marginLeft: 6,
+  },
+  micActive: {
+    backgroundColor: '#ffe6e6',
+    borderRadius: 20,
   },
 });

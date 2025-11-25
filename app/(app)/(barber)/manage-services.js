@@ -13,7 +13,7 @@ import {
   ScrollView, // Add this import
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { getBarberServices, addBarberService, auth } from '@/services/firebase';
+import { getBarberServices, addBarberService, updateBarberService, auth } from '@/services/firebase';
 import * as ImagePicker from 'expo-image-picker';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -128,9 +128,15 @@ function Screen() {
         name: serviceName,
         duration: parsedDuration,
         price: parsedPrice,
-        image: serviceImage, // Include image in service data
+        image: serviceImage,
       };
-      await addBarberService(user.uid, serviceData);
+
+      if (editingService && editingService.id) {
+        await updateBarberService(user.uid, editingService.id, serviceData);
+      } else {
+        await addBarberService(user.uid, serviceData);
+      }
+
       setModalVisible(false);
       fetchServices();
     } catch (err) {

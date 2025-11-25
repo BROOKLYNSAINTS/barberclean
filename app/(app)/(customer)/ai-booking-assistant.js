@@ -6,6 +6,7 @@ import { assistWithAppointmentBooking } from '@/services/openai'; // Adjusted pa
 //import { getBarberAvailability, auth } from '@/services/firebase'; // Adjusted path
 import { getBarberAvailability, createAppointment, getUserProfile } from '@/services/firebase';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import * as Speech from 'expo-speech';
 
 const AIBookingAssistantScreen = () => {
   const router = useRouter();
@@ -23,6 +24,13 @@ const AIBookingAssistantScreen = () => {
   const [aiSuggestion, setAiSuggestion] = useState(null);
 
   useEffect(() => {
+    const greeting = barber && service
+      ? `Hi! I'm your booking assistant. I can help you book ${service.name} with ${barber.name}. First, pick a day that works for you.`
+      : "Hi! I'm your booking assistant. I can help you find and book an appointment. Start by choosing a date.";
+    Speech.speak(greeting, { language: 'en-US', pitch: 1.0, rate: 1.0 });
+  }, []);
+
+  useEffect(() => {
     if (!barber || !service) {
       setError('Barber or service information is missing.');
       setLoading(false);
@@ -32,6 +40,13 @@ const AIBookingAssistantScreen = () => {
       fetchAvailableSlots();
     }
   }, [selectedDate, barber, service]);
+
+  useEffect(() => {
+    const greeting = barber && service
+      ? `Hi! I'm your booking assistant. I can help you book ${service.name} with ${barber.name}. First, pick a day that works for you.`
+      : "Hi! I'm your booking assistant. I can help you find and book an appointment. Start by choosing a date.";
+    Speech.speak(greeting, { language: 'en-US', pitch: 1.0, rate: 1.0 });
+  }, []);
 
   const fetchAvailableSlots = async () => {
     if (!barber || !barber.id) {
@@ -96,8 +111,14 @@ const AIBookingAssistantScreen = () => {
         if (result.suggestedTime && availableSlots.includes(result.suggestedTime)) {
           setSelectedSlot(result.suggestedTime);
         }
+        if (result.explanation) {
+          Speech.speak(result.explanation, { language: 'en-US', pitch: 1.0, rate: 1.0 });
+        }
       } else {
         setError(result.error || 'AI could not find a suitable slot. Please try selecting manually or rephrasing.');
+          if (result.explanation) {
+            Speech.speak(result.explanation, { language: 'en-US', pitch: 1.0, rate: 1.0 });
+          }
       }
     } catch (error) {
       console.error('Error processing AI booking request:', error);
