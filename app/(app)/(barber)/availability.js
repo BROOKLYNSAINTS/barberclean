@@ -1,19 +1,29 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, ScrollView, Platform } from 'react-native';
 import { Calendar } from 'react-native-calendars';
 import { getUserProfile, updateUserProfile, auth } from '@/services/firebase';
 import { useRouter } from 'expo-router';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'; // Add this import
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 const BarberAvailabilityScreen = () => {
   const router = useRouter();
-  const insets = useSafeAreaInsets(); // Add this hook
+  const insets = useSafeAreaInsets();
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [unavailableDates, setUnavailableDates] = useState({});
-  const [workingHours, setWorkingHours] = useState({ start: '08:00', end: '17:00', interval: 30 });
+  const [workingHours, setWorkingHours] = useState({
+    start: '08:00',
+    end: '17:00',
+    interval: 30,
+  });
+  const [pickerState, setPickerState] = useState({
+    mode: null, // 'start' | 'end' | null
+    visible: false,
+    tempDate: new Date(),
+  });
 
   const fetchProfileData = useCallback(async () => {
     setLoading(true);
@@ -39,16 +49,18 @@ const BarberAvailabilityScreen = () => {
 
   useEffect(() => {
     fetchProfileData();
-  }, []);
+  }, [fetchProfileData]);
 
   const handleDayPress = (day) => {
-    const newDates = { ...unavailableDates };
-    if (newDates[day.dateString]) {
-      delete newDates[day.dateString];
-    } else {
-      newDates[day.dateString] = { disabled: true, disableTouchEvent: true };
-    }
-    setUnavailableDates(newDates);
+    setUnavailableDates((prev) => {
+      const copy = { ...prev };
+      if (copy[day.dateString]) {
+        delete copy[day.dateString];
+      } else {
+        copy[day.dateString] = true;
+      }
+      return copy;
+    });
   };
 
   const handleSaveAvailability = async () => {
@@ -57,7 +69,7 @@ const BarberAvailabilityScreen = () => {
       setError('');
       const user = auth.currentUser;
       if (!user) {
-        Alert.alert("Error", "User not authenticated.");
+        Alert.alert('Error', 'User not authenticated.');
         return;
       }
       await updateUserProfile(user.uid, { unavailableDates, workingHours });
@@ -71,7 +83,58 @@ const BarberAvailabilityScreen = () => {
   };
 
   const handleTimeChange = (type, value) => {
-    setWorkingHours(prev => ({ ...prev, [type]: value }));
+    setWorkingHours((prev) => ({ ...prev, [type]: value }));
+  };
+
+  const parseTimeToDate = (timeStr) => {
+    const [hourStr, minuteStr] = timeStr.split(':');
+    const date = new Date();
+    date.setHours(parseInt(hourStr, 10) || 0, parseInt(minuteStr, 10) || 0, 0, 0);
+    return date;
+  };
+
+  const formatDateToTimeString = (date) => {
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    return `${hours}:${minutes}`;
+  };
+
+  const openTimePicker = (mode) => {
+    const currentTime = mode === 'start' ? workingHours.start : workingHours.end;
+    setPickerState({
+      mode,
+      visible: true,
+      tempDate: parseTimeToDate(currentTime),
+    });
+  };
+
+  const handleTimePickerChange = (event, selectedDate) => {
+    if (Platform.OS === 'android') {
+      if (event.type === 'dismissed') {
+        setPickerState((prev) => ({ ...prev, visible: false, mode: null }));
+        return;
+      }
+      if (selectedDate) {
+        const timeString = formatDateToTimeString(selectedDate);
+        if (pickerState.mode === 'start') {
+          handleTimeChange('start', timeString);
+        } else if (pickerState.mode === 'end') {
+          handleTimeChange('end', timeString);
+        }
+      }
+      setPickerState((prev) => ({ ...prev, visible: false, mode: null }));
+    } else {
+      // iOS: live update while keeping picker open
+      if (selectedDate) {
+        const timeString = formatDateToTimeString(selectedDate);
+        if (pickerState.mode === 'start') {
+          handleTimeChange('start', timeString);
+        } else if (pickerState.mode === 'end') {
+          handleTimeChange('end', timeString);
+        }
+        setPickerState((prev) => ({ ...prev, tempDate: selectedDate }));
+      }
+    }
   };
 
   if (loading) {
@@ -95,21 +158,17 @@ const BarberAvailabilityScreen = () => {
           <Text style={styles.sectionTitle}>📅 Unavailable Dates</Text>
           <Text style={styles.sectionDescription}>Tap dates when you're NOT available</Text>
           <Calendar
-            markedDates={{
-              ...unavailableDates,
-              // Add styling for marked dates
-              ...Object.keys(unavailableDates).reduce((acc, date) => {
-                acc[date] = {
-                  ...unavailableDates[date],
-                  color: '#FF4136',
-                  textColor: 'white',
-                  selected: true,
-                  selectedColor: '#FF4136'
-                };
-                return acc;
-              }, {})
-            }}
+            markedDates={Object.keys(unavailableDates).reduce((acc, date) => {
+              acc[date] = {
+                selected: true,
+                selectedColor: '#FF4136',
+                selectedTextColor: 'white',
+              };
+              return acc;
+            }, {})}
             onDayPress={handleDayPress}
+            pastScrollRange={12}
+            futureScrollRange={12}
             theme={{
               selectedDayBackgroundColor: '#FF4136',
               todayTextColor: '#007BFF',
@@ -129,15 +188,15 @@ const BarberAvailabilityScreen = () => {
           <Text style={styles.sectionTitle}>⏰ Working Hours</Text>
           <Text style={styles.sectionDescription}>Set your daily working schedule</Text>
           <View style={styles.timeRow}>
-            <TouchableOpacity 
-              onPress={() => handleTimeChange('start', workingHours.start === '08:00' ? '09:00' : '08:00')} 
+            <TouchableOpacity
+              onPress={() => openTimePicker('start')}
               style={styles.timeButton}
             >
               <Text style={styles.timeLabel}>Start Time</Text>
               <Text style={styles.timeValue}>{workingHours.start}</Text>
             </TouchableOpacity>
-            <TouchableOpacity 
-              onPress={() => handleTimeChange('end', workingHours.end === '17:00' ? '18:00' : '17:00')} 
+            <TouchableOpacity
+              onPress={() => openTimePicker('end')}
               style={styles.timeButton}
             >
               <Text style={styles.timeLabel}>End Time</Text>
@@ -146,9 +205,18 @@ const BarberAvailabilityScreen = () => {
           </View>
         </View>
 
-        <TouchableOpacity 
-          style={[styles.saveButton, saving && styles.saveButtonDisabled]} 
-          onPress={handleSaveAvailability} 
+        {pickerState.visible && pickerState.mode && (
+          <DateTimePicker
+            value={pickerState.tempDate}
+            mode="time"
+            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+            onChange={handleTimePickerChange}
+          />
+        )}
+
+        <TouchableOpacity
+          style={[styles.saveButton, saving && styles.saveButtonDisabled]}
+          onPress={handleSaveAvailability}
           disabled={saving}
         >
           <Text style={styles.saveButtonText}>
