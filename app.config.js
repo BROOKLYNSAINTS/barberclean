@@ -62,7 +62,7 @@ export default {
     ],
     android: {
       package: "com.ScheduleSync.barber",
-      versionCode: 27,
+      versionCode: 28,
     },
     runtimeVersion: "1.0.4",
     updates: {
