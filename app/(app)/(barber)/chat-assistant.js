@@ -6,7 +6,10 @@ import * as Speech from 'expo-speech';
 import * as SpeechRecognition from 'expo-speech';
 
 const promptPrefix =
-  "You are a friendly assistant helping a barber manage and grow their barber business. Answer clearly and practically. ";
+  "You are an expert AI assistant for barbers. " +
+  "You answer any question about running and growing a barber shop—" +
+  "hours, pricing, marketing, staff, customer experience, finances, strategy—" +
+  "in clear, practical, friendly language. ";
 
 export default function ChatAssistantScreen() {
   const [input, setInput] = useState('');

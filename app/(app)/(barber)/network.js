@@ -97,23 +97,26 @@ const BarberNetworkScreen = () => {
         return;
       }
 
+      Alert.alert('Debug', 'Starting chat thread...');
+
       const threadId = await startOrGetChatThread(currentUserId, barber.id);
+
+      Alert.alert('Debug', `Thread result: ${JSON.stringify(threadId)}`);
+
       let cleanThreadId = '';
 
       if (typeof threadId === 'string') {
         cleanThreadId = threadId;
-        console.log("✅ this is a string:", threadId, "Type:", typeof threadId);
       } else if (threadId && typeof threadId.threadId === 'string') {
         cleanThreadId = threadId.threadId;
-        console.log("✅ threadId.threadId:", threadId.threadId, "Type:", typeof threadId.threadId);
       }
-
-      console.log('✅ Final threadId for chat navigation:', cleanThreadId);
 
       if (!cleanThreadId) {
-        Alert.alert("Chat Error", "No valid chat ID returned. Please try again.");
+        Alert.alert('Chat Error', 'No valid chat ID returned. Please try again.');
         return;
       }
+
+      Alert.alert('Debug', `Navigating to chat: ${cleanThreadId}`);
 
       router.push({
         pathname: '/(app)/(barber)/chat',
@@ -121,7 +124,7 @@ const BarberNetworkScreen = () => {
       });
     } catch (err) {
       console.error('Failed to initiate chat:', err);
-      Alert.alert('Error', 'Could not start chat. Please try again later.');
+      Alert.alert('Error', `Could not start chat: ${String(err)}`);
     }
   };
 
