@@ -6,16 +6,16 @@ const androidIntentUrl =
 export default {
   expo: {
     name: "barber-clean",
-    slug: "barber-clean",
+    slug: "barberclean",
     version: "1.0.4",
-    scheme: "barber-clean",
+    scheme: "barberclean",
     orientation: "portrait",
     icon: "./assets/icon512.png",
     userInterfaceStyle: "light",
     newArchEnabled: true,
      extra: {
       eas: {
-        projectId: "34c586b7-af2c-411d-9fbd-5cb699e2b12e"
+        projectId: "83f06aa9-0a00-4fc3-8d84-e1ac8b51c5ef"
       },
         firebase: {
         apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
@@ -61,8 +61,8 @@ export default {
       ]
     ],
     android: {
-      package: "com.ScheduleSync.barber",
-      versionCode: 36,
+      package: "com.ScheduleSync.barber.beta",
+      versionCode: 38,
     },
     runtimeVersion: "1.0.4",
     updates: {
