@@ -61,10 +61,10 @@ export default {
       ]
     ],
     android: {
-      package: "com.ScheduleSync.barber.beta",
-      versionCode: 38,
+      package: "com.ScheduleSync.barber.one",
+      versionCode: 1,
     },
-    runtimeVersion: "1.0.4",
+    runtimeVersion: "1.0.5",
     updates: {
       enabled: false,
       checkAutomatically: "NEVER",
