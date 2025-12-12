@@ -60,7 +60,7 @@ const TipScreen = ({ route, navigation }) => {
   };
 
   const calculateTipAmount = () => {
-    const servicePrice = appointment.servicePrice || 0;
+    const servicePrice = appointment.servicePrice ?? appointment.price ?? 0;
     
     if (selectedTip) {
       return (servicePrice * selectedTip.percent) / 100;

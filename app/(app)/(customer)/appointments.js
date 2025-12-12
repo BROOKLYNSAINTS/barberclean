@@ -73,6 +73,7 @@ const AppointmentsScreen = () => {
 
   const renderAppointmentItem = ({ item }) => {
     const upcoming = isUpcoming(item);
+    const price = item.servicePrice ?? item.price ?? null;
     
     return (
       <TouchableOpacity 
@@ -115,9 +116,9 @@ const AppointmentsScreen = () => {
           
           <View style={styles.detailRow}>
             <Ionicons name="cash-outline" size={16} color="#666" style={styles.detailIcon} />
-          <Text style={styles.detailText}>
-            {item.servicePrice != null ? `$${item.servicePrice.toFixed(2)}` : 'No price'}
-          </Text>
+            <Text style={styles.detailText}>
+              {price != null ? `$${price.toFixed(2)}` : 'No price'}
+            </Text>
           </View>
         </View>
         

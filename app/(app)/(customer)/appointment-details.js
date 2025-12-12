@@ -57,8 +57,10 @@ const AppointmentDetailsScreen = () => {
         return;
       }
 
-      // Check if appointment has required fields
-      if (!appointment.barberName || !appointment.serviceName || !appointment.servicePrice) {
+          const effectivePrice = appointment.servicePrice ?? appointment.price;
+
+          // Check if appointment has required fields
+          if (!appointment.barberName || !appointment.serviceName || effectivePrice == null) {
         setError('Appointment is missing required data.');
         setLoading(false);
         return;
@@ -207,53 +209,51 @@ const AppointmentDetailsScreen = () => {
       return;
     }
 
+    const price = appointment.servicePrice ?? appointment.price ?? 0;
+    if (price <= 0) {
+      Alert.alert('Error', 'Invalid price for this appointment.');
+      return;
+    }
+
     try {
       setPaymentProcessing(true);
-      
-      // Use the new Stripe payment sheet integration
+
       const result = await createAndPresentServicePaymentSheet(
         auth.currentUser?.uid,
         appointment.barberId,
         appointment.id,
-        appointment.servicePrice,
+        price,
         `${appointment.serviceName} - ${appointment.barberName}`
       );
 
       if (result.success) {
-        // Update local payment status
         setPaymentStatus({
           isPaid: true,
-          amount: appointment.servicePrice,
-          paidAt: new Date()
+          amount: price,
+          paidAt: new Date(),
         });
 
-        const paymentMessage = result.demo 
-          ? `Demo payment of $${appointment.servicePrice?.toFixed(2)} has been processed successfully. (Backend not configured - this is simulation mode)`
-          : `Payment of $${appointment.servicePrice?.toFixed(2)} has been processed successfully.`;
+        const paymentMessage = result.demo
+          ? `Demo payment of $${price.toFixed(2)} has been processed successfully. (Backend not configured - this is simulation mode)`
+          : `Payment of $${price.toFixed(2)} has been processed successfully.`;
 
-        Alert.alert(
-          'Payment Successful',
-          paymentMessage,
-          [{ text: 'OK' }]
-        );
+        Alert.alert('Payment Successful', paymentMessage, [{ text: 'OK' }]);
       } else if (result.canceled) {
-        // User canceled the payment
         console.log('Payment was canceled by user');
       } else {
         throw new Error('Payment failed');
       }
     } catch (error) {
       console.error('Payment error:', error);
-      
+
       let errorMessage = 'There was an error processing your payment. Please try again.';
-      
-      // Handle specific error cases
+
       if (error.message.includes('backend call') || error.message.includes('configuration')) {
         errorMessage = 'Payment system is not fully configured. Using demo mode.';
       } else if (error.message.includes('secret format')) {
         errorMessage = 'Payment configuration error. Using demo payment instead.';
       }
-      
+
       Alert.alert('Payment Notice', errorMessage);
     } finally {
       setPaymentProcessing(false);
@@ -340,7 +340,13 @@ const AppointmentDetailsScreen = () => {
         <View style={styles.row}>
           <Ionicons name="pricetag" size={20} color="#555" />
           <Text style={styles.label}>Price:</Text>
-          <Text style={styles.value}>${appointment.servicePrice?.toFixed(2) || 'N/A'}</Text>
+          <Text style={styles.value}>
+            {
+              (appointment.servicePrice ?? appointment.price) != null
+                ? `$${(appointment.servicePrice ?? appointment.price).toFixed(2)}`
+                : 'N/A'
+            }
+          </Text>
         </View>
         
         {/* Payment Status Row */}
@@ -380,7 +386,7 @@ const AppointmentDetailsScreen = () => {
       </View>
 
       {/* Payment Section */}
-      {!paymentStatus.isPaid && appointment.servicePrice > 0 && (
+      {!paymentStatus.isPaid && (appointment.servicePrice ?? appointment.price) > 0 && (
         <View style={styles.paymentSection}>
           <TouchableOpacity 
             style={[styles.payButton, paymentProcessing && styles.disabledPayment]} 
@@ -389,7 +395,11 @@ const AppointmentDetailsScreen = () => {
           >
             <Ionicons name="card" size={20} color="#fff" style={styles.buttonIcon} />
             <Text style={styles.payButtonText}>
-              {paymentProcessing ? 'Processing...' : `Pay $${appointment.servicePrice?.toFixed(2)}`}
+              {
+                paymentProcessing
+                  ? 'Processing...'
+                  : `Pay $${(appointment.servicePrice ?? appointment.price)?.toFixed(2)}`
+              }
             </Text>
           </TouchableOpacity>
           <Text style={styles.paymentHint}>Pay after service is completed</Text>

@@ -179,11 +179,17 @@ export async function createAppointment(data) {
   }
 }
 export const getAppointmentsByBarber = async (barberId) => {
-return {
-  ...docRef,  // if you're returning the ref manually
-  id: docRef.id,
-  ...data  // Make sure this includes date and time
-};
+  try {
+    const q = query(
+      collection(db, 'appointments'),
+      where('barberId', '==', barberId)
+    );
+    const querySnapshot = await getDocs(q);
+    return querySnapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+  } catch (error) {
+    console.error('Error fetching appointments for barber:', error);
+    return [];
+  }
 };
 
 export const getCustomerAppointments = async (customerId) => {
@@ -199,17 +205,9 @@ export const getCustomerAppointments = async (customerId) => {
     return [];
   }
 };
-// Get a single appointment by its ID
-export const getBarberAppointments = async (appointmentId) => {
-  try {
-    const apptRef = doc(db, 'appointments', appointmentId);
-    const apptSnap = await getDoc(apptRef);
-    if (!apptSnap.exists()) return null;
-    return { id: apptSnap.id, ...apptSnap.data() };
-  } catch (error) {
-    console.error('Error fetching appointment:', error);
-    return null;
-  }
+// Get all appointments for a specific barber
+export const getBarberAppointments = async (barberId) => {
+  return getAppointmentsByBarber(barberId);
 };
 
 export const getBarberReviews = async (barberId) => {

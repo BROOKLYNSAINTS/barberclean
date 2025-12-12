@@ -1,4 +1,4 @@
-import { Platform, Linking } from 'react-native';
+import { Platform, Linking, Alert } from 'react-native';
 import { initStripe, useStripe } from '@stripe/stripe-react-native';
 import Constants from 'expo-constants';
 import { db } from '@/services/firebase';
@@ -11,6 +11,17 @@ const extra = Constants.expoConfig?.extra;
 const STRIPE_PUBLISHABLE_KEY =
   process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY || extra?.stripePublishableKey;
 console.log('me (STRIPE_PUBLISHABLE_KEY):', STRIPE_PUBLISHABLE_KEY);
+
+// Temporary debug: show part of the key on device
+try {
+  if (STRIPE_PUBLISHABLE_KEY) {
+    Alert.alert('Stripe key', STRIPE_PUBLISHABLE_KEY.slice(0, 18));
+  } else {
+    Alert.alert('Stripe key', 'MISSING');
+  }
+} catch (e) {
+  // ignore alert errors in non-UI contexts
+}
 
 // Debug logging
 console.log('🔑 Stripe Configuration Check:');

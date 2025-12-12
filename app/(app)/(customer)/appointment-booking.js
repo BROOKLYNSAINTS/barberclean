@@ -62,8 +62,15 @@ export default function AppointmentBookingScreen() {
         setLoadingSlots(true);
         setError('');
         console.log("🔄 Fetching slots for", barber.id, "on", selectedDate);
-        const slots = await getBarberAvailability(barber.id, selectedDate);
-        setAvailableSlots(Array.isArray(slots) ? slots : []);
+        const availability = await getBarberAvailability(barber.id);
+
+        const slotsForDate = Array.isArray(availability)
+          ? availability
+              .filter((slot) => slot.date === selectedDate && !!slot.time)
+              .map((slot) => slot.time)
+          : [];
+
+        setAvailableSlots(slotsForDate);
       } catch (err) {
         console.error('Error fetching available slots:', err);
         setAvailableSlots([]);
