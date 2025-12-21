@@ -124,6 +124,7 @@ export default function BarberBulletinScreen() {
   const [loading, setLoading] = useState(false);
   const [posting, setPosting] = useState(false);
   const [commentInputs, setCommentInputs] = useState({});
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const categories = [
     { id: 'general', name: 'General', icon: '💬' },
@@ -157,6 +158,17 @@ export default function BarberBulletinScreen() {
   useFocusEffect(useCallback(() => {
     fetchPosts();
   }, [fetchPosts]));
+
+  React.useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', (e) => {
+      setKeyboardHeight(e.endCoordinates?.height || 0);
+    });
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardHeight(0));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
 
   const handlePost = async () => {
     if (!title.trim() || !content.trim()) {
@@ -260,13 +272,22 @@ export default function BarberBulletinScreen() {
         </TouchableOpacity>
 
         <Modal visible={modalVisible} transparent animationType="slide">
-          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-            <View style={styles.modalOverlay}>
-              <KeyboardAvoidingView
-                style={styles.modalContainer}
-                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-              >
-                <View style={styles.modal}>
+          <View style={styles.modalOverlay}>
+            {/* Touchable area only on the overlay background so inputs can receive touches */}
+            <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+              <View style={{ flex: 1 }} />
+            </TouchableWithoutFeedback>
+
+            <KeyboardAvoidingView
+              style={styles.modalContainer}
+              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+              keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+            >
+              <ScrollView
+                  keyboardShouldPersistTaps="handled"
+                  contentContainerStyle={{ paddingBottom: 24 }}
+                >
+                  <View style={[styles.modal, { marginBottom: Platform.OS === 'android' ? keyboardHeight : 0 }]}> 
                   <View style={styles.modalHeader}>
                     <Text style={styles.modalTitle}>✍️ Create New Post</Text>
                     <TouchableOpacity onPress={() => setModalVisible(false)}>
@@ -319,13 +340,13 @@ export default function BarberBulletinScreen() {
                     disabled={posting}
                   >
                     <Text style={styles.postButtonText}>
-                      {posting ? 'Posting...' : 'Share Post'}
+                      {posting ? 'Posting...' : 'Post to Bulletin'}
                     </Text>
                   </TouchableOpacity>
                 </View>
-              </KeyboardAvoidingView>
-            </View>
-          </TouchableWithoutFeedback>
+              </ScrollView>
+            </KeyboardAvoidingView>
+          </View>
         </Modal>
       </KeyboardAvoidingView>
     </SafeAreaView>

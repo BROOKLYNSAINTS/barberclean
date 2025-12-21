@@ -1,67 +1,70 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, TextInput, Button, Text, ScrollView, StyleSheet, KeyboardAvoidingView, Platform, TouchableOpacity } from 'react-native';
+import {
+  View,
+  TextInput,
+  Button,
+  Text,
+  ScrollView,
+  StyleSheet,
+  KeyboardAvoidingView,
+  Platform,
+  TouchableOpacity,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { generateChatResponse } from '@/services/openai';
+import { generateBarberAdminHelp } from '@/services/openai';
 import * as Speech from 'expo-speech';
-import * as SpeechRecognition from 'expo-speech';
-
-const promptPrefix =
-  "You are an expert AI assistant for barbers. " +
-  "You answer any question about running and growing a barber shop—" +
-  "hours, pricing, marketing, staff, customer experience, finances, strategy—" +
-  "in clear, practical, friendly language. ";
 
 export default function ChatAssistantScreen() {
   const [input, setInput] = useState('');
   const [chatLog, setChatLog] = useState([]);
   const [isListening, setIsListening] = useState(false);
-  const scrollRef = useRef();
+  const scrollRef = useRef(null);
 
   useEffect(() => {
     const greeting =
-      "Hi! I'm your AI assistant. I can help you manage your barber business, answer questions about appointments, services, and marketing. How can I help you today?";
+      "Hi! I'm your AI assistant. I can help you with pricing, marketing, staffing, customer experience, and day-to-day barber business questions. How can I help you today?";
+
     setChatLog([{ sender: 'bot', text: greeting }]);
-    Speech.speak(greeting, {
-      language: 'en-US',
-      pitch: 1.0,
-      rate: 1.0,
-    });
+
+    Speech.speak(greeting, { language: 'en-US', pitch: 1.0, rate: 1.0 });
   }, []);
 
   const handleMicPress = async () => {
-    // Placeholder: Expo does not have built-in speech-to-text; this is where
-    // you would hook up your Google or native STT and then setInput(transcript).
-    // For now, just toggle a visual state so the button can be wired later.
-    setIsListening(prev => !prev);
+    // Placeholder only. expo-speech is text-to-speech, not speech-to-text.
+    setIsListening((prev) => !prev);
   };
 
   const sendMessage = async () => {
-    if (!input.trim()) return;
+    const trimmed = input.trim();
+    if (!trimmed) return;
 
-    const userMsg = { sender: 'user', text: input };
-    setChatLog(prev => [...prev, userMsg]);
+    const userMsg = { sender: 'user', text: trimmed };
+    setChatLog((prev) => [...prev, userMsg]);
     setInput('');
 
     try {
-      const result = await generateChatResponse(promptPrefix + input);
+      const result = await generateBarberAdminHelp(trimmed);
 
       if (!result?.success) {
-        const errorText = result?.error || 'Sorry, I had trouble answering that.';
-        const botMsg = { sender: 'bot', text: errorText };
-        setChatLog(prev => [...prev, botMsg]);
-        Speech.speak(errorText, { language: 'en-US', pitch: 1.0, rate: 1.0 });
+        // If OpenAI returns a JSON error object, show something readable
+        const err = result?.error;
+        const friendly =
+          typeof err === 'string'
+            ? err
+            : err?.error?.message || err?.message || 'Sorry, I had trouble answering that.';
+
+        setChatLog((prev) => [...prev, { sender: 'bot', text: friendly }]);
+        Speech.speak(friendly, { language: 'en-US', pitch: 1.0, rate: 1.0 });
       } else {
         const reply = result.text;
-        const botMsg = { sender: 'bot', text: reply };
-        setChatLog(prev => [...prev, botMsg]);
+        setChatLog((prev) => [...prev, { sender: 'bot', text: reply }]);
         Speech.speak(reply, { language: 'en-US', pitch: 1.0, rate: 1.0 });
       }
     } catch (e) {
       console.error('Chat assistant error:', e);
-      setChatLog(prev => [
-        ...prev,
-        { sender: 'bot', text: 'Something went wrong talking to the assistant.' },
-      ]);
+      const msg = 'Something went wrong talking to the assistant.';
+      setChatLog((prev) => [...prev, { sender: 'bot', text: msg }]);
+      Speech.speak(msg, { language: 'en-US', pitch: 1.0, rate: 1.0 });
     }
 
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
@@ -77,11 +80,8 @@ export default function ChatAssistantScreen() {
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Chat Assistant</Text>
         </View>
-        <ScrollView
-          style={styles.chatBox}
-          ref={scrollRef}
-          contentContainerStyle={{ padding: 10 }}
-        >
+
+        <ScrollView ref={scrollRef} style={styles.chatBox} contentContainerStyle={{ padding: 10 }}>
           {chatLog.map((msg, index) => (
             <Text key={index} style={msg.sender === 'user' ? styles.userText : styles.botText}>
               {msg.sender === 'user' ? 'You: ' : 'Assistant: '}
@@ -89,12 +89,17 @@ export default function ChatAssistantScreen() {
             </Text>
           ))}
         </ScrollView>
+
         <View style={styles.inputContainer}>
           <TextInput
             value={input}
             onChangeText={setInput}
             placeholder="Ask me anything..."
             style={styles.input}
+            autoCorrect={false}
+            autoCapitalize="sentences"
+            returnKeyType="send"
+            onSubmitEditing={sendMessage}
           />
           <Button title="Send" onPress={sendMessage} />
           <TouchableOpacity
@@ -124,8 +129,8 @@ const styles = StyleSheet.create({
     color: '#2196F3',
   },
   chatBox: { flex: 1 },
-  userText: { alignSelf: 'flex-end', marginVertical: 2 },
-  botText: { alignSelf: 'flex-start', marginVertical: 2, color: 'blue' },
+  userText: { alignSelf: 'flex-end', marginVertical: 6 },
+  botText: { alignSelf: 'flex-start', marginVertical: 6, color: '#1565C0' },
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -137,8 +142,9 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     borderWidth: 1,
+    borderColor: '#ddd',
     padding: 10,
-    borderRadius: 5,
+    borderRadius: 6,
     marginRight: 8,
   },
   micButton: {

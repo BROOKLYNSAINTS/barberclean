@@ -6,7 +6,6 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { createDummyAppointments } from "@/utils/test";
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { signOut } from 'firebase/auth';
-
 const BarberDashboardScreen = () => {
   const router = useRouter();
   const insets = useSafeAreaInsets(); // Add this hook

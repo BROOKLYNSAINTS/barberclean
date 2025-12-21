@@ -121,33 +121,62 @@ export const getBarberAvailability = async (barberId) => {
   }
 
   const userData = userSnap.data();
-  const { workingDays, workingHours } = userData;
-  console.log('🗓️ Barber workingDays:', workingDays, 'workingHours:', workingHours);
+  const { workingDays, workingHours, unavailableDates } = userData;
+  console.log('🗓️ Barber data:', { workingDays, workingHours, unavailableDates });
+
+  // Default to Monday-Friday if workingDays not set
+  const defaultWorkingDays = {
+    monday: true,
+    tuesday: true,
+    wednesday: true,
+    thursday: true,
+    friday: true,
+    saturday: false,
+    sunday: false
+  };
+
+  const effectiveWorkingDays = workingDays || defaultWorkingDays;
+  
+  // Default working hours if not set
+  const effectiveWorkingHours = workingHours || {
+    start: '09:00',
+    end: '17:00',
+    interval: 30
+  };
+
+  if (!effectiveWorkingHours.start || !effectiveWorkingHours.end) {
+    console.log('❌ Working hours not properly configured');
+    return [];
+  }
 
   const today = new Date();
   const availability = [];
 
-  for (let i = 0; i < 7; i++) {
+  // Generate availability for 90 days (3 months) ahead
+  for (let i = 0; i < 90; i++) {
     const currentDate = new Date(today);
     currentDate.setDate(today.getDate() + i);
+    const dateStr = currentDate.toISOString().split('T')[0];
     const dayName = currentDate.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
 
-    if (workingDays?.[dayName]) {
-      const dateStr = currentDate.toISOString().split('T')[0];
-      const start = parseTime(workingHours.start);
-      const end = parseTime(workingHours.end);
-      const interval = workingHours.interval || 30;
+    // Skip if date is in unavailableDates or day of week is not a working day
+    if (unavailableDates?.[dateStr] || !effectiveWorkingDays[dayName]) {
+      continue;
+    }
 
-      for (let time = start; time < end; time += interval) {
-        availability.push({
-          date: dateStr,
-          time: formatTime(time)
-        });
-      }
+    const start = parseTime(effectiveWorkingHours.start);
+    const end = parseTime(effectiveWorkingHours.end);
+    const interval = effectiveWorkingHours.interval || 30;
+
+    for (let time = start; time < end; time += interval) {
+      availability.push({
+        date: dateStr,
+        time: formatTime(time)
+      });
     }
   }
 
-  console.log('📅 Computed Availability:', availability);
+  console.log('📅 Computed Availability (total slots):', availability.length);
   return availability;
 };
 

@@ -36,6 +36,16 @@ export default function NewChatScreen() {
     setLoading(true);
     try {
       const currentBarberId = auth.currentUser?.uid;
+      if (!currentBarberId) {
+        console.warn('handleCreateChat: no authenticated user');
+        Alert.alert('Authentication Error', 'You must be signed in to start a chat.');
+        return;
+      }
+      if (!recipientId) {
+        console.warn('handleCreateChat: missing recipientId');
+        Alert.alert('Error', 'Invalid recipient.');
+        return;
+      }
       const currentBarber = barbers.find(b => b.id === currentBarberId);
       const recipientBarber = barbers.find(b => b.id === recipientId);
 
@@ -78,7 +88,8 @@ export default function NewChatScreen() {
         });
       }
     } catch (error) {
-      Alert.alert('Error', 'Failed to create or find chat thread.');
+      console.error('Failed to create or find chat thread:', error);
+      Alert.alert('Error', error?.message || 'Failed to create or find chat thread.');
     } finally {
       setLoading(false);
     }

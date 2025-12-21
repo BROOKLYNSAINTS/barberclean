@@ -4,6 +4,7 @@
   },
   "build": {
     "preview": {
+      "environment": "preview",
       "developmentClient": false,
       "node": "20.19.4",
       "channel": "staging",
@@ -19,6 +20,7 @@
       }
     },
     "production": {
+      "environment": "production",
       "developmentClient": false,
       "node": "20.19.4",
       "channel": "production",
