@@ -6,79 +6,86 @@ import {
   StyleSheet,
   FlatList,
   TouchableOpacity,
+  TextInput,
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
+  Keyboard,
+  TouchableWithoutFeedback,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { auth, getUserProfile, getBarbersByZipcode } from '@/services/firebase';
 import { startOrGetChatThread } from '@/services/chatService';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Card } from '@/components/UIComponents';
-
-function resolveBarberUid(barber) {
-  // support any shape you might be returning from Firestore
-  return (
-    barber?.authUid ||
-    barber?.uid ||
-    barber?.userId ||
-    barber?.id || // keep last
-    ''
-  );
-}
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Button, Card } from '@/components/UIComponents';
 
 export default function BarberNetworkScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const startingRef = useRef(false);
 
   const [loading, setLoading] = useState(true);
   const [barbers, setBarbers] = useState([]);
+  const [zipcode, setZipcode] = useState('');
+  const [searchZipcode, setSearchZipcode] = useState('');
+  const [searching, setSearching] = useState(false);
+  const [error, setError] = useState('');
 
-  const load = useCallback(async () => {
+  const fetchBarbers = useCallback(async (zip) => {
     try {
-      setLoading(true);
-
+      setError('');
       const me = auth.currentUser?.uid;
       if (!me) {
         Alert.alert('Auth Error', 'Not logged in');
         return;
       }
 
-      const profile = await getUserProfile(me);
-      if (!profile?.zipcode) {
-        Alert.alert('Profile Error', 'Zipcode missing');
+      const results = await getBarbersByZipcode(zip);
+
+      const cleaned = (results || []).filter((b) => b?.id && b.id !== me);
+      setBarbers(cleaned);
+    } catch (e) {
+      console.error('Network fetch error:', e);
+      setError('Failed to load network.');
+    } finally {
+      setLoading(false);
+      setSearching(false);
+    }
+  }, []);
+
+  const load = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError('');
+
+      const me = auth.currentUser?.uid;
+      if (!me) {
+        router.replace('/(auth)/login');
         return;
       }
 
-      const zip = String(profile.zipcode);
-      const results = await getBarbersByZipcode(zip);
+      const profile = await getUserProfile(me);
+      const zip = String(profile?.zipcode || '').trim();
 
-      // Filter out me using resolved uid (NOT assuming "id" is auth uid)
-      const cleaned = (results || []).filter((b) => {
-        const other = resolveBarberUid(b);
-        return !!other && other !== me;
-      });
-
-      setBarbers(cleaned);
-
-      // DEBUG: show what the first barber object looks like
-      if (cleaned?.length) {
-        const sample = cleaned[0];
-        const sampleUid = resolveBarberUid(sample);
-        Alert.alert(
-          'DEBUG (Network loaded)',
-          `me=${me}\nzip=${zip}\nfirst barber uid=${sampleUid}\nfields: ${Object.keys(sample).join(', ')}`
-        );
-      } else {
-        Alert.alert('DEBUG (Network loaded)', `me=${me}\nzip=${zip}\n0 barbers after filtering`);
+      if (!/^\d{5}$/.test(zip)) {
+        setZipcode('');
+        setSearchZipcode('');
+        setLoading(false);
+        setError('Zipcode missing on profile.');
+        return;
       }
+
+      setZipcode(zip);
+      setSearchZipcode(zip);
+      await fetchBarbers(zip);
     } catch (e) {
-      Alert.alert('Error', `Failed to load network: ${String(e)}`);
-      console.error(e);
-    } finally {
+      console.error('Load error:', e);
+      setError('Failed to load network.');
       setLoading(false);
     }
-  }, []);
+  }, [fetchBarbers, router]);
 
   useFocusEffect(
     useCallback(() => {
@@ -86,36 +93,39 @@ export default function BarberNetworkScreen() {
     }, [load])
   );
 
+  const handleSearch = () => {
+    const zip = String(zipcode || '').trim();
+    if (!/^\d{5}$/.test(zip)) {
+      Alert.alert('Invalid Zipcode', 'Enter a valid 5-digit zipcode.');
+      return;
+    }
+    setSearching(true);
+    setSearchZipcode(zip);
+    fetchBarbers(zip);
+  };
+
   const handleMessage = async (barber) => {
     if (startingRef.current) return;
     startingRef.current = true;
 
     try {
       const me = auth.currentUser?.uid;
-      const other = resolveBarberUid(barber);
-
-      // DEBUG: show exactly what we're about to use
-      Alert.alert('DEBUG (Start chat)', `me=${me}\nother=${other}`);
+      const other = barber?.id;
 
       if (!me || !other) {
-        Alert.alert(
-          'Chat Error',
-          `Missing user id\nme=${String(me)}\nother=${String(other)}`
-        );
+        Alert.alert('Chat Error', 'Missing user id');
         return;
       }
 
       const threadId = await startOrGetChatThread(me, other);
-
-      Alert.alert('DEBUG (Thread created/found)', `threadId=${threadId}`);
 
       router.push({
         pathname: '/(app)/(barber)/chat',
         params: { threadId },
       });
     } catch (e) {
-      Alert.alert('Chat Error', `Could not start chat:\n${String(e)}`);
-      console.error(e);
+      console.error('Start chat error:', e);
+      Alert.alert('Chat Error', e?.message ? String(e.message) : String(e));
     } finally {
       startingRef.current = false;
     }
@@ -131,41 +141,77 @@ export default function BarberNetworkScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <FlatList
-        data={barbers}
-        keyExtractor={(i, idx) => resolveBarberUid(i) || String(idx)}
-        contentContainerStyle={{ padding: 16 }}
-        renderItem={({ item }) => (
-          <Card style={styles.card}>
-            <Text style={styles.name}>{item?.name || 'Barber'}</Text>
-
-            <View style={styles.metaRow}>
-              <Text style={styles.metaText}>
-                uid: {resolveBarberUid(item) || 'MISSING'}
-              </Text>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={insets.top + 10}
+      >
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <View style={{ flex: 1 }}>
+            <View style={styles.header}>
+              <Text style={styles.title}>Barber Network</Text>
+              <Text style={styles.subtitle}>Find barbers near you</Text>
             </View>
 
-            <TouchableOpacity style={styles.btn} onPress={() => handleMessage(item)}>
-              <Ionicons name="chatbubble-outline" size={18} color="#fff" />
-              <Text style={styles.btnText}>Message</Text>
-            </TouchableOpacity>
-          </Card>
-        )}
-        ListEmptyComponent={
-          <Text style={{ textAlign: 'center' }}>No barbers found</Text>
-        }
-      />
+            <View style={styles.searchRow}>
+              <TextInput
+                value={zipcode}
+                onChangeText={setZipcode}
+                placeholder="Zipcode"
+                keyboardType="numeric"
+                maxLength={5}
+                style={styles.input}
+                returnKeyType="search"
+                onSubmitEditing={handleSearch}
+              />
+              <Button title={searching ? '...' : 'Search'} onPress={handleSearch} disabled={searching} />
+            </View>
+
+            {!!error && (
+              <View style={styles.errorBox}>
+                <Text style={styles.errorText}>{error}</Text>
+              </View>
+            )}
+
+            <FlatList
+              data={barbers}
+              keyExtractor={(i) => String(i.id)}
+              contentContainerStyle={{ padding: 16, paddingBottom: 30 }}
+              renderItem={({ item }) => (
+                <Card style={styles.card}>
+                  <Text style={styles.name}>{item.name || 'Barber'}</Text>
+                  <TouchableOpacity style={styles.btn} onPress={() => handleMessage(item)}>
+                    <Ionicons name="chatbubble-outline" size={18} color="#fff" />
+                    <Text style={styles.btnText}>Message</Text>
+                  </TouchableOpacity>
+                </Card>
+              )}
+              ListEmptyComponent={<Text style={{ textAlign: 'center' }}>No barbers found</Text>}
+            />
+          </View>
+        </TouchableWithoutFeedback>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
+  container: { flex: 1, backgroundColor: '#f2f2f2' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+
+  header: { padding: 20, backgroundColor: '#fff', alignItems: 'center' },
+  title: { fontSize: 22, fontWeight: 'bold' },
+  subtitle: { color: '#666' },
+
+  searchRow: { flexDirection: 'row', padding: 16, backgroundColor: '#fff', gap: 10 },
+  input: { flex: 1, borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 10, backgroundColor: '#fff' },
+
+  errorBox: { marginHorizontal: 16, marginTop: 10, padding: 12, backgroundColor: '#ffe5e5', borderRadius: 10 },
+  errorText: { color: '#b00020', fontWeight: '600', textAlign: 'center' },
+
   card: { padding: 16, marginBottom: 12 },
-  name: { fontSize: 18, fontWeight: 'bold', marginBottom: 6 },
-  metaRow: { marginBottom: 10 },
-  metaText: { fontSize: 12, color: '#666' },
+  name: { fontSize: 18, fontWeight: 'bold', marginBottom: 10 },
+
   btn: {
     flexDirection: 'row',
     backgroundColor: '#007BFF',

@@ -1,8 +1,10 @@
+// src/services/chatService.js
+import { db } from '@/services/firebase';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from './firebase';
 
 function makeThreadId(uidA, uidB) {
-  return [uidA, uidB].sort().join('_');
+  const [a, b] = [String(uidA), String(uidB)].sort();
+  return `${a}__${b}`;
 }
 
 export const startOrGetChatThread = async (uidA, uidB) => {
@@ -24,4 +26,9 @@ export const startOrGetChatThread = async (uidA, uidB) => {
   });
 
   return threadId;
+};
+
+export const getThreadIdForUsers = (uidA, uidB) => {
+  if (!uidA || !uidB || uidA === uidB) return '';
+  return makeThreadId(uidA, uidB);
 };

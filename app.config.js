@@ -67,7 +67,7 @@ export default {
 
     android: {
       package: "com.ScheduleSync.barber.one",
-      versionCode: 26,
+      versionCode: 28,
       permissions: ["INTERNET", "READ_CALENDAR", "WRITE_CALENDAR"],
     },
     runtimeVersion: "1.0.5",

@@ -1,97 +1,61 @@
-import React, { useState, useEffect } from 'react';
+// app/(app)/(barber)/new-chat.js
+import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
-import { getFirestore, collection, getDocs, addDoc, serverTimestamp, query, where } from 'firebase/firestore';
-import { app, auth } from '@/services/firebase';
-
-const db = getFirestore(app);
+import { auth, getUserProfile, getBarbersByZipcode } from '@/services/firebase';
+import { startOrGetChatThread } from '@/services/chatService';
 
 export default function NewChatScreen() {
   const router = useRouter();
-  const [barbers, setBarbers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [barbers, setBarbers] = useState([]);
 
   useEffect(() => {
-    const fetchBarbers = async () => {
+    (async () => {
       try {
-        const q = query(
-          collection(db, 'users'),
-          where('role', '==', 'barber')
-        );
-        const snapshot = await getDocs(q);
-        const barberList = snapshot.docs
-          .map(doc => ({ id: doc.id, ...doc.data() }))
-          .filter(barber => barber.id !== auth.currentUser?.uid); // Exclude self
-        setBarbers(barberList);
-      } catch (error) {
-        Alert.alert('Error', 'Failed to fetch barbers.');
+        const me = auth.currentUser?.uid;
+        if (!me) {
+          router.replace('/(auth)/login');
+          return;
+        }
+
+        const profile = await getUserProfile(me);
+        const zip = String(profile?.zipcode || '').trim();
+        if (!/^\d{5}$/.test(zip)) {
+          Alert.alert('Profile Error', 'Zipcode missing on profile.');
+          return;
+        }
+
+        const results = await getBarbersByZipcode(zip);
+        const cleaned = (results || []).filter((b) => b?.id && b.id !== me);
+        setBarbers(cleaned);
+      } catch (e) {
+        console.error('NewChat load error:', e);
+        Alert.alert('Error', 'Failed to load barbers.');
       } finally {
         setLoading(false);
       }
-    };
-    fetchBarbers();
-  }, []);
+    })();
+  }, [router]);
 
-  const handleCreateChat = async (recipientId) => {
-    setLoading(true);
+  const startChat = async (barber) => {
     try {
-      const currentBarberId = auth.currentUser?.uid;
-      if (!currentBarberId) {
-        console.warn('handleCreateChat: no authenticated user');
-        Alert.alert('Authentication Error', 'You must be signed in to start a chat.');
+      const me = auth.currentUser?.uid;
+      const other = barber?.id;
+      if (!me || !other) {
+        Alert.alert('Chat Error', 'Missing user id.');
         return;
       }
-      if (!recipientId) {
-        console.warn('handleCreateChat: missing recipientId');
-        Alert.alert('Error', 'Invalid recipient.');
-        return;
-      }
-      const currentBarber = barbers.find(b => b.id === currentBarberId);
-      const recipientBarber = barbers.find(b => b.id === recipientId);
 
-      const pairKey = [currentBarberId, recipientId].sort().join('-');
-      const threadsQuery = query(
-        collection(db, 'chatThreads'),
-        where('pairKey', '==', pairKey)
-      );
-      const threadsSnapshot = await getDocs(threadsQuery);
+      const threadId = await startOrGetChatThread(me, other);
 
-      const existingThread = threadsSnapshot.docs.find(doc => {
-        const participants = doc.data().participants;
-        return (
-          Array.isArray(participants) &&
-          participants.length === 2 &&
-          participants.includes(currentBarberId) &&
-          participants.includes(recipientId)
-        );
+      router.push({
+        pathname: '/(app)/(barber)/chat',
+        params: { threadId },
       });
-
-      if (existingThread) {
-        router.replace({
-          pathname: '/(app)/(barber)/chat',
-          params: { threadId: existingThread.id }
-        });
-      } else {
-        const docRef = await addDoc(collection(db, 'chatThreads'), {
-          participants: [currentBarberId, recipientId],
-          pairKey,
-          createdAt: serverTimestamp(),
-          lastMessage: '',
-          participantsInfo: [
-            { id: currentBarberId, role: 'barber', name: currentBarber?.name || 'Barber' },
-            { id: recipientId, role: 'barber', name: recipientBarber?.name || 'Barber' }
-          ]
-        });
-        router.replace({
-          pathname: '/(app)/(barber)/chat',
-          params: { threadId: docRef.id }
-        });
-      }
-    } catch (error) {
-      console.error('Failed to create or find chat thread:', error);
-      Alert.alert('Error', error?.message || 'Failed to create or find chat thread.');
-    } finally {
-      setLoading(false);
+    } catch (e) {
+      console.error('NewChat start error:', e);
+      Alert.alert('Error', e?.message ? String(e.message) : 'Failed to start chat.');
     }
   };
 
@@ -104,36 +68,23 @@ export default function NewChatScreen() {
   }
 
   return (
-    <View style={{ flex: 1, padding: 24 }}>
-      <Text style={{ fontSize: 22, fontWeight: 'bold', marginTop: 8, marginBottom: 16 }}>
-        Select a Barber to Chat
-      </Text>
+    <View style={{ flex: 1, backgroundColor: '#fff' }}>
+      <Text style={{ fontSize: 22, fontWeight: 'bold', margin: 20 }}>Start a new chat</Text>
+
       <FlatList
         data={barbers}
-        keyExtractor={item => item.id}
+        keyExtractor={(i) => String(i.id)}
         renderItem={({ item }) => (
           <TouchableOpacity
-            style={{
-              padding: 16,
-              borderBottomWidth: 1,
-              borderBottomColor: '#eee',
-              backgroundColor: '#fff',
-              marginBottom: 8,
-              borderRadius: 8,
-            }}
-            onPress={() => handleCreateChat(item.id)}
+            style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: '#eee' }}
+            onPress={() => startChat(item)}
           >
             <Text style={{ fontSize: 18 }}>{item.name || 'Barber'}</Text>
-            <Text style={{ color: '#666', marginTop: 4 }}>{item.email}</Text>
+            <Text style={{ color: '#666', marginTop: 4 }}>{item.shopName || ''}</Text>
           </TouchableOpacity>
         )}
-        ListEmptyComponent={
-          <Text style={{ textAlign: 'center', marginTop: 40 }}>
-            No other barbers found.
-          </Text>
-        }
+        ListEmptyComponent={<Text style={{ textAlign: 'center', marginTop: 40 }}>No barbers found.</Text>}
       />
     </View>
   );
 }
-
