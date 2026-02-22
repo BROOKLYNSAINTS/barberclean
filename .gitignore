@@ -43,3 +43,4 @@ app-example
 /android
 google-play-service-account.json
 latest.aab
+.vercel

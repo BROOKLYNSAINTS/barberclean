@@ -1,16 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Alert, KeyboardAvoidingView, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { assistWithAppointmentBooking } from '@/services/openai'; // Adjusted path
-//import { getBarberAvailability, auth } from '@/services/firebase'; // Adjusted path
-import { getBarberAvailability, createAppointment, getUserProfile } from '@/services/firebase';
+import { assistWithAppointmentBooking } from '@/services/openai';
+import { getBarberAvailability, createAppointment, getUserProfile, getCustomerAppointments } from '@/services/firebase';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useAuth } from '../../../src/contexts/AuthContext';
 import * as Speech from 'expo-speech';
 
 const AIBookingAssistantScreen = () => {
   const router = useRouter();
   const params = useLocalSearchParams();
+  const { user } = useAuth();
   const barber = params.barber ? JSON.parse(params.barber) : null;
   const service = params.service ? JSON.parse(params.service) : null;
   
@@ -139,7 +140,7 @@ const handleContinue = async () => {
   }
 
   try {
-    const customerId = auth.currentUser?.uid;
+    const customerId = user?.uid;
     if (!customerId) {
       Alert.alert('Error', 'User not logged in.');
       return;
@@ -147,7 +148,7 @@ const handleContinue = async () => {
 
     const customerProfile = await getUserProfile(customerId);
 
-    await createAppointment({
+    const appointmentData = await createAppointment({
       customerId,
       customerName: customerProfile?.name || 'Unknown',
       barberId: barber.id,
@@ -161,8 +162,17 @@ const handleContinue = async () => {
       createdAt: new Date().toISOString(),
     });
 
-    Alert.alert('Success', 'Your appointment has been booked.');
-    router.replace('/(app)/(customer)/appointments'); // or confirmation screen
+    // Navigate to confirmation screen with appointment details for payment
+    router.push({
+      pathname: '/(app)/(customer)/appointment-confirmation',
+      params: {
+        appointmentId: appointmentData.id,
+        barber: JSON.stringify(barber),
+        service: JSON.stringify(service),
+        date: selectedDate,
+        time: selectedSlot,
+      },
+    });
   } catch (error) {
     console.error('❌ Failed to book appointment:', error);
     Alert.alert('Error', 'Failed to book appointment. Please try again.');
@@ -208,8 +218,17 @@ const handleContinue = async () => {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView style={styles.container}>
-        <View style={styles.header}>
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={{ flex: 1 }}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+      >
+        <ScrollView 
+          style={{ flex: 1 }}
+          contentContainerStyle={{ flexGrow: 1 }}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={styles.header}>
           <Text style={styles.title}>AI Booking Assistant</Text>
           <Text style={styles.subtitle}>
             Tell us your preferences, and our AI will help you find the perfect appointment time.
@@ -365,6 +384,7 @@ const handleContinue = async () => {
           <Text style={styles.continueButtonText}>Continue to Booking</Text>
         </TouchableOpacity>
       </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 };
@@ -620,5 +640,5 @@ const styles = StyleSheet.create({
     backgroundColor: '#cccccc',
   },
 });
-export default AIBookingAssistantScreen;
 
+export default AIBookingAssistantScreen;

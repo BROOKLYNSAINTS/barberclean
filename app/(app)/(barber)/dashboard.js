@@ -1,4 +1,3 @@
-// app/(app)/(barber)/dashboard.js
 import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
@@ -10,68 +9,64 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { getBarberAppointments, getUserProfile, auth } from '@/services/firebase';
+import {
+  getBarberAppointments,
+  getUserProfile,
+  auth,
+} from '@/services/firebase';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { signOut } from 'firebase/auth';
 
-function safeNumber(n) {
-  return typeof n === 'number' && !isNaN(n) ? n : 0;
+function tsToDate(ts) {
+  if (!ts) return null;
+  if (typeof ts?.toDate === 'function') return ts.toDate();
+  if (typeof ts?.seconds === 'number') return new Date(ts.seconds * 1000);
+  return null;
 }
 
-function formatDate(dateString) {
-  if (!dateString || typeof dateString !== 'string' || !dateString.includes('-')) return 'N/A';
-  const [year, month, day] = dateString.split('-').map(Number);
-  if (isNaN(year) || isNaN(month) || isNaN(day)) return 'N/A';
-  const dateObj = new Date(year, month - 1, day);
-  return dateObj.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+function toTime24(rawTime) {
+  if (!rawTime) return null;
+  const str = String(rawTime).replace(/\u202f|\u00a0/g, ' ');
+  const m = str.match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  return `${m[1].padStart(2, '0')}:${m[2]}`;
+}
+
+function isToday(appt) {
+  const now = new Date();
+  return appt.date === now.toISOString().slice(0, 10);
+}
+
+function isUpcoming(appt) {
+  const time24 = appt.time24 || toTime24(appt.time);
+  if (!time24) return false;
+  const d = new Date(`${appt.date}T${time24}:00`);
+  return d >= new Date();
 }
 
 export default function BarberDashboardScreen() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
 
   const [profile, setProfile] = useState(null);
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
 
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      setError('');
-
       const user = auth.currentUser;
-      if (!user?.uid) {
-        setError('User not authenticated.');
-        router.replace('/(auth)/login');
-        return;
-      }
+      if (!user?.uid) return;
 
       const userProfile = await getUserProfile(user.uid);
       setProfile(userProfile);
 
-      if (userProfile?.role && userProfile.role !== 'barber') {
-        setError('Access denied. This dashboard is for barbers only.');
-        return;
-      }
-
-      const appts = (await getBarberAppointments(user.uid)) || [];
-
-      appts.sort((a, b) => {
-        const dateA = new Date(`${a.date}T${a.time}`);
-        const dateB = new Date(`${b.date}T${b.time}`);
-        return dateA - dateB;
-      });
-
-      setAppointments(appts);
-    } catch (err) {
-      console.error('Error fetching dashboard data:', err);
-      setError(`Failed to load dashboard information: ${String(err)}`);
+      const appts = await getBarberAppointments(user.uid);
+      setAppointments(appts || []);
     } finally {
       setLoading(false);
     }
-  }, [router]);
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -79,355 +74,243 @@ export default function BarberDashboardScreen() {
     }, [fetchData])
   );
 
-  const today = useMemo(() => new Date().toISOString().split('T')[0], []);
-  const { todayAppointments, upcomingAppointments } = useMemo(() => {
-    const todayAppts = appointments.filter((a) => a?.date === today);
+  /* =============================
+     METRICS
+  ============================= */
 
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
+  const todayCount = useMemo(
+    () => appointments.filter(isToday).length,
+    [appointments]
+  );
 
-    const upcoming = appointments
-      .filter((a) => {
-        const dt = new Date(`${a.date}T${a.time}`);
-        return dt >= todayStart && a?.date !== today;
-      })
-      .slice(0, 5);
+  const upcomingCount = useMemo(
+    () =>
+      appointments.filter(
+        (a) => a.status === 'confirmed' && isUpcoming(a)
+      ).length,
+    [appointments]
+  );
 
-    return { todayAppointments: todayAppts, upcomingAppointments: upcoming };
-  }, [appointments, today]);
+  const totalBooked = appointments.length;
 
-  const handleLogout = useCallback(() => {
-    Alert.alert('Logout', 'Are you sure you want to logout?', [
+  const recoveredRevenue = useMemo(() => {
+    const now = new Date();
+    const totalCents = appointments.reduce((sum, a) => {
+      const ns = a?.noShowProtection;
+      if (ns?.status !== 'charged') return sum;
+
+      const d =
+        tsToDate(ns.chargedAt) ||
+        tsToDate(a.updatedAt) ||
+        tsToDate(a.cancelledAt);
+
+      if (!d) return sum;
+
+      if (
+        d.getMonth() === now.getMonth() &&
+        d.getFullYear() === now.getFullYear()
+      ) {
+        return sum + (ns.amountCents || 0);
+      }
+
+      return sum;
+    }, 0);
+
+    return (totalCents / 100).toFixed(2);
+  }, [appointments]);
+
+  const upcomingAppointments = appointments
+    .filter((a) => a.status === 'confirmed' && isUpcoming(a))
+    .slice(0, 5);
+
+  const handleLogout = () => {
+    Alert.alert('Logout?', '', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Logout',
         style: 'destructive',
         onPress: async () => {
-          try {
-            await signOut(auth);
-            router.replace('/(auth)/login');
-          } catch (err) {
-            console.error('Error logging out:', err);
-            Alert.alert('Error', `Failed to logout: ${String(err)}`);
-          }
+          await signOut(auth);
+          router.replace('/(auth)/login');
         },
       },
     ]);
-  }, [router]);
-
-  const renderAppointment = useCallback(
-    ({ item }) => {
-      return (
-        <TouchableOpacity
-          style={styles.appointmentCard}
-          onPress={() =>
-            router.push({
-              pathname: '/(app)/(barber)/appointment-details',
-              params: { appointment: JSON.stringify(item) },
-            })
-          }
-        >
-          <View style={styles.appointmentTime}>
-            <Text style={styles.timeText}>{item?.time || '—'}</Text>
-            <Text style={styles.dateText}>{formatDate(item?.date)}</Text>
-          </View>
-
-          <View style={styles.appointmentInfo}>
-            <Text style={styles.customerName}>{item?.customerName || 'N/A'}</Text>
-            <Text style={styles.serviceName}>{item?.serviceName || 'N/A'}</Text>
-            <Text style={styles.servicePrice}>
-              ${safeNumber(item?.servicePrice).toFixed(2)}
-            </Text>
-          </View>
-
-          <View style={styles.appointmentAction}>
-            <Ionicons name="chevron-forward" size={22} color="#2196F3" />
-          </View>
-        </TouchableOpacity>
-      );
-    },
-    [router]
-  );
+  };
 
   if (loading) {
     return (
       <SafeAreaView style={styles.centered}>
-        <ActivityIndicator size="large" color="#2196F3" />
-        <Text style={styles.loadingText}>Loading dashboard...</Text>
+        <ActivityIndicator size="large" />
       </SafeAreaView>
     );
   }
-
-  if (error) {
-    return (
-      <SafeAreaView style={styles.centered}>
-        <Ionicons name="alert-circle-outline" size={64} color="#f44336" />
-        <Text style={styles.errorText}>{error}</Text>
-
-        <TouchableOpacity style={styles.retryButton} onPress={fetchData}>
-          <Text style={styles.retryButtonText}>Retry</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.retryButton, { marginTop: 10, backgroundColor: '#111' }]}
-          onPress={() => router.replace('/(auth)/login')}
-        >
-          <Text style={styles.retryButtonText}>Go to Login</Text>
-        </TouchableOpacity>
-      </SafeAreaView>
-    );
-  }
-
-  const subscriptionActive = profile?.subscription?.status === 'active';
 
   return (
     <SafeAreaView style={styles.container}>
       <FlatList
-        data={[]}
-        keyExtractor={() => 'x'}
-        contentContainerStyle={{ paddingBottom: 24 }}
+        data={upcomingAppointments}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => (
+          <TouchableOpacity
+            style={styles.apptCard}
+            onPress={() =>
+              router.push({
+                pathname: '/(app)/(barber)/appointment-details',
+                params: { appointment: JSON.stringify(item) },
+              })
+            }
+          >
+            <View>
+              <Text style={styles.apptCustomer}>
+                {item.customerName}
+              </Text>
+              <Text style={styles.apptService}>
+                {item.serviceName}
+              </Text>
+              <Text style={styles.apptTime}>
+                {item.date} @ {item.time}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} />
+          </TouchableOpacity>
+        )}
         ListHeaderComponent={
           <>
-            {/* Header */}
-            <View style={[styles.header, { paddingTop: insets.top > 0 ? 0 : 20 }]}>
-              <View style={styles.headerLeft}>
-                <Text style={styles.welcomeText}>
-                  Welcome, {profile?.name || 'Barber'}
-                </Text>
-
-                {subscriptionActive ? (
-                  <View style={styles.subscriptionActive}>
-                    <Ionicons name="checkmark-circle" size={16} color="#4CAF50" />
-                    <Text style={styles.subscriptionActiveText}>Subscription Active</Text>
-                  </View>
-                ) : (
-                  <TouchableOpacity
-                    style={styles.subscriptionInactive}
-                    onPress={() => router.push('/(app)/(barber)/subscription-payment')}
-                  >
-                    <Ionicons name="alert-circle" size={16} color="#f44336" />
-                    <Text style={styles.subscriptionInactiveText}>Subscription Inactive</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-
-              <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
-                <Ionicons name="log-out-outline" size={18} color="#f44336" />
-                <Text style={styles.logoutText}>Logout</Text>
+            <View style={styles.header}>
+              <Text style={styles.welcome}>
+                Welcome, {profile?.name}
+              </Text>
+              <TouchableOpacity onPress={handleLogout}>
+                <Ionicons
+                  name="log-out-outline"
+                  size={20}
+                  color="#f44336"
+                />
               </TouchableOpacity>
             </View>
 
-            {/* Stats */}
-            <View style={styles.statsContainer}>
-              <View style={styles.statCard}>
-                <Text style={styles.statValue}>{todayAppointments.length}</Text>
-                <Text style={styles.statLabel}>Today</Text>
+            <View style={styles.metricsRow}>
+              <View style={styles.metricCard}>
+                <Text style={styles.metricNumber}>{todayCount}</Text>
+                <Text style={styles.metricLabel}>Today</Text>
               </View>
-              <View style={styles.statCard}>
-                <Text style={styles.statValue}>{upcomingAppointments.length}</Text>
-                <Text style={styles.statLabel}>Upcoming (Next 5)</Text>
-              </View>
-              <View style={styles.statCard}>
-                <Text style={styles.statValue}>{appointments.length}</Text>
-                <Text style={styles.statLabel}>Total Booked</Text>
-              </View>
-            </View>
 
-            {/* Empty overall */}
-            {appointments.length === 0 ? (
-              <View style={styles.emptyContainer}>
-                <Text style={styles.emptyText}>
-                  You have no appointments yet. Set up services and share your booking link.
+              <View style={styles.metricCard}>
+                <Text style={styles.metricNumber}>
+                  {upcomingCount}
+                </Text>
+                <Text style={styles.metricLabel}>
+                  Upcoming (Next 5)
                 </Text>
               </View>
-            ) : null}
 
-            {/* Today Section */}
-            <View style={styles.sectionContainer}>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Today's Appointments</Text>
-                {todayAppointments.length > 0 ? (
-                  <TouchableOpacity
-                    onPress={() => router.push('/(app)/(barber)/all-appointments?filter=today')}
-                  >
-                    <Text style={styles.seeAllText}>See All</Text>
-                  </TouchableOpacity>
-                ) : null}
+              <View style={styles.metricCard}>
+                <Text style={styles.metricNumber}>
+                  {totalBooked}
+                </Text>
+                <Text style={styles.metricLabel}>
+                  Total Booked
+                </Text>
               </View>
-
-              {todayAppointments.length > 0 ? (
-                todayAppointments.map((appt) => (
-                  <View key={`${appt.id || appt.date + appt.time}-today`}>
-                    {renderAppointment({ item: appt })}
-                  </View>
-                ))
-              ) : (
-                <View style={styles.emptyContainer}>
-                  <Text style={styles.emptyText}>No appointments scheduled for today.</Text>
-                </View>
-              )}
             </View>
 
-            {/* Upcoming Section */}
-            <View style={styles.sectionContainer}>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Upcoming Appointments</Text>
-                {upcomingAppointments.length > 0 ? (
-                  <TouchableOpacity
-                    onPress={() => router.push('/(app)/(barber)/all-appointments?filter=upcoming')}
-                  >
-                    <Text style={styles.seeAllText}>See All</Text>
-                  </TouchableOpacity>
-                ) : null}
-              </View>
-
-              {upcomingAppointments.length > 0 ? (
-                upcomingAppointments.map((appt) => (
-                  <View key={`${appt.id || appt.date + appt.time}-upcoming`}>
-                    {renderAppointment({ item: appt })}
-                  </View>
-                ))
-              ) : (
-                <View style={styles.emptyContainer}>
-                  <Text style={styles.emptyText}>No upcoming appointments.</Text>
-                </View>
-              )}
+            <View style={styles.recoveredCard}>
+              <Text style={styles.recoveredAmount}>
+                ${recoveredRevenue}
+              </Text>
+              <Text style={styles.recoveredLabel}>
+                Recovered This Month
+              </Text>
             </View>
 
-            <View style={{ height: 12 }} />
+            <Text style={styles.sectionTitle}>
+              Upcoming Appointments
+            </Text>
           </>
         }
-        renderItem={null}
+        contentContainerStyle={{ paddingBottom: 30 }}
       />
     </SafeAreaView>
   );
 }
 
+/* =============================
+   STYLES
+============================= */
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f2f5' },
-
-  centered: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-    backgroundColor: '#f0f2f5',
-  },
-  loadingText: { marginTop: 10, fontSize: 16, color: '#666' },
-  errorText: { marginTop: 10, fontSize: 16, color: '#f44336', textAlign: 'center' },
-  retryButton: {
-    marginTop: 20,
-    backgroundColor: '#2196F3',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 8,
-  },
-  retryButtonText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
+  centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
 
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     padding: 16,
     backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#ddd',
-  },
-  headerLeft: { flex: 1 },
-  welcomeText: { fontSize: 18, fontWeight: '600', color: '#333', marginBottom: 8 },
-
-  logoutButton: {
     flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#f44336',
-    backgroundColor: '#fff5f5',
-    marginLeft: 8,
+    justifyContent: 'space-between',
   },
-  logoutText: { marginLeft: 6, color: '#f44336', fontWeight: '600', fontSize: 14 },
+  welcome: { fontSize: 20, fontWeight: '700' },
 
-  subscriptionActive: {
+  metricsRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#e8f5e9',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 15,
-    alignSelf: 'flex-start',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    marginTop: 16,
   },
-  subscriptionActiveText: { color: '#4CAF50', marginLeft: 6, fontWeight: '500', fontSize: 12 },
-
-  subscriptionInactive: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ffebee',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 15,
-    alignSelf: 'flex-start',
-  },
-  subscriptionInactiveText: { color: '#f44336', marginLeft: 6, fontWeight: '500', fontSize: 12 },
-
-  statsContainer: { flexDirection: 'row', padding: 12, backgroundColor: '#f0f2f5' },
-  statCard: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 16,
+  metricCard: {
     backgroundColor: '#fff',
-    borderRadius: 8,
+    flex: 1,
     marginHorizontal: 4,
-    elevation: 2,
+    padding: 16,
+    borderRadius: 12,
+    alignItems: 'center',
   },
-  statValue: { fontSize: 22, fontWeight: 'bold', color: '#2196F3' },
-  statLabel: { fontSize: 12, color: '#555', marginTop: 4, textAlign: 'center' },
+  metricNumber: {
+    fontSize: 26,
+    fontWeight: '700',
+    color: '#2196F3',
+  },
+  metricLabel: {
+    marginTop: 6,
+    fontSize: 12,
+    color: '#555',
+    textAlign: 'center',
+  },
 
-  sectionContainer: { paddingHorizontal: 12, paddingTop: 12, backgroundColor: '#f0f2f5' },
-  sectionHeader: {
+  recoveredCard: {
+    backgroundColor: '#e8f5e9',
+    margin: 16,
+    padding: 18,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  recoveredAmount: {
+    fontSize: 28,
+    fontWeight: '800',
+    color: '#2e7d32',
+  },
+  recoveredLabel: {
+    fontSize: 13,
+    marginTop: 4,
+  },
+
+  sectionTitle: {
+    marginHorizontal: 16,
+    fontWeight: '700',
+    fontSize: 16,
+    marginBottom: 8,
+  },
+
+  apptCard: {
+    backgroundColor: '#fff',
+    marginHorizontal: 16,
+    marginTop: 10,
+    padding: 16,
+    borderRadius: 12,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
-    paddingHorizontal: 4,
   },
-  sectionTitle: { fontSize: 17, fontWeight: '600', color: '#333' },
-  seeAllText: { color: '#2196F3', fontWeight: '500', fontSize: 14 },
-
-  emptyContainer: {
-    padding: 20,
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    marginVertical: 8,
-  },
-  emptyText: { color: '#666', fontSize: 14, textAlign: 'center' },
-
-  appointmentCard: {
-    flexDirection: 'row',
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 10,
-    elevation: 2,
-  },
-  appointmentTime: {
-    width: 70,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRightWidth: 1,
-    borderRightColor: '#eee',
-    paddingRight: 10,
-    marginRight: 10,
-  },
-  timeText: { fontSize: 15, fontWeight: 'bold', color: '#333' },
-  dateText: { fontSize: 11, color: '#777', marginTop: 2 },
-
-  appointmentInfo: { flex: 1 },
-  customerName: { fontSize: 15, fontWeight: '600', color: '#444' },
-  serviceName: { fontSize: 13, color: '#666', marginTop: 2 },
-  servicePrice: { fontSize: 13, color: '#2196F3', fontWeight: '500', marginTop: 3 },
-
-  appointmentAction: { justifyContent: 'center', paddingLeft: 10 },
+  apptCustomer: { fontWeight: '700' },
+  apptService: { color: '#555' },
+  apptTime: { color: '#777', marginTop: 4 },
 });

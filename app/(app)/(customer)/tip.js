@@ -1,12 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Alert, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { processPayment } from '@/services/stripe';
-import { getUserProfile, updateUserProfile } from '@/services/firebase';
+import { useStripe, createTipPaymentSheet } from '@/services/stripe';
+import { auth, getUserProfile, getCustomerAppointments, db } from '@/services/firebase';
+import { collection, addDoc, serverTimestamp, doc, updateDoc } from 'firebase/firestore';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 
 
-const TipScreen = ({ route, navigation }) => {
-  const { appointment } = route.params;
+const TipScreen = () => {
+  const router = useRouter();
+  const params = useLocalSearchParams();
+  const stripe = useStripe();
+
+  const safeParse = (input) => {
+    if (!input) return null;
+    try {
+      return typeof input === 'string' ? JSON.parse(input) : input;
+    } catch (_err) {
+      return null;
+    }
+  };
+
+  const appointment = safeParse(params.appointment);
+  const [resolvedAppointment, setResolvedAppointment] = useState(appointment || null);
   
   const [loading, setLoading] = useState(false);
   const [processing, setProcessing] = useState(false);
@@ -23,16 +39,57 @@ const TipScreen = ({ route, navigation }) => {
     { percent: 25, label: '25%' },
   ];
 
+  const normalizeCurrencyValue = (input) => {
+    if (typeof input === 'number') {
+      return Number.isFinite(input) ? input : 0;
+    }
+
+    if (typeof input === 'string') {
+      const cleaned = input.replace(/[^0-9.-]/g, '');
+      if (!cleaned) return 0;
+      const parsed = Number(cleaned);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+
+    return 0;
+  };
+
   useEffect(() => {
     fetchPaymentMethods();
   }, []);
+
+  useEffect(() => {
+    // Fallback: if no appointment passed via params, pick the latest non-cancelled appointment for this customer
+    const loadFallbackAppointment = async () => {
+      try {
+        if (resolvedAppointment) return;
+        const user = auth.currentUser;
+        if (!user?.uid) return;
+        const appts = await getCustomerAppointments(user.uid);
+        if (Array.isArray(appts) && appts.length > 0) {
+          const candidates = appts.filter((a) => a && a.status !== 'cancelled');
+          candidates.sort((a, b) => {
+            const da = new Date(`${a.date}T${a.time}`);
+            const db = new Date(`${b.date}T${b.time}`);
+            return db - da; // latest first
+          });
+          if (candidates[0]) setResolvedAppointment(candidates[0]);
+        }
+      } catch (e) {
+        console.warn('Failed to load fallback appointment for tip:', e);
+      }
+    };
+    loadFallbackAppointment();
+  }, [resolvedAppointment]);
 
   const fetchPaymentMethods = async () => {
     try {
       setLoading(true);
       
       const user = auth.currentUser;
-      const userProfile = await getUserProfile(user.uid);
+      if (user?.uid) {
+        await getUserProfile(user.uid);
+      }
       
       // In a real app, you would fetch saved payment methods
       // For this demo, we'll use a placeholder
@@ -60,15 +117,17 @@ const TipScreen = ({ route, navigation }) => {
   };
 
   const calculateTipAmount = () => {
-    const servicePrice = appointment.servicePrice ?? appointment.price ?? 0;
+    const appt = resolvedAppointment;
+    const servicePrice = normalizeCurrencyValue(
+      appt?.servicePrice ?? appt?.price ?? 0
+    );
     
     if (selectedTip) {
       return (servicePrice * selectedTip.percent) / 100;
     }
     
     if (customTip) {
-      const tipValue = parseFloat(customTip);
-      return isNaN(tipValue) ? 0 : tipValue;
+      return normalizeCurrencyValue(customTip);
     }
     
     return 0;
@@ -77,33 +136,91 @@ const TipScreen = ({ route, navigation }) => {
   const handleSubmitTip = async () => {
     const tipAmount = calculateTipAmount();
     
-    if (tipAmount <= 0) {
+    if (!Number.isFinite(tipAmount) || tipAmount <= 0) {
       Alert.alert('Error', 'Please select or enter a valid tip amount');
       return;
     }
 
     try {
       setProcessing(true);
-      
-      // In a real app, you would process the payment through your backend
-      // For this demo, we'll simulate a successful payment
-      await processPayment(paymentMethod.id, tipAmount * 100);
-      
+
+      const userId = auth.currentUser?.uid || null;
+      const appointmentId = resolvedAppointment?.id || null;
+      const barberId = resolvedAppointment?.barberId || null;
+
+      // Create PaymentIntent for tip
+      const pi = await createTipPaymentSheet(
+        userId,
+        tipAmount,
+        appointmentId,
+        barberId
+      );
+
+      // Initialize and present payment sheet
+      const { error: initError } = await stripe.initPaymentSheet({
+        merchantDisplayName: 'Barber Tips',
+        customerId: pi.customer,
+        customerEphemeralKeySecret: pi.ephemeralKey,
+        paymentIntentClientSecret: pi.clientSecret,
+        allowsDelayedPaymentMethods: false,
+        defaultBillingDetails: { name: 'Customer' },
+        returnURL: 'barberclean://payment-return',
+      });
+      if (initError) {
+        throw new Error(`Payment init failed: ${initError.message}`);
+      }
+
+      const { error: presentError } = await stripe.presentPaymentSheet();
+      if (presentError) {
+        if (presentError.code === 'Canceled') {
+          setError('Payment was canceled.');
+          return;
+        }
+        throw new Error(`Payment failed: ${presentError.message}`);
+      }
+
+      // Record tip in Firestore
+      try {
+        const paymentRef = await addDoc(collection(db, 'payments'), {
+          customerId: userId,
+          barberId,
+          appointmentId,
+          amount: tipAmount,
+          description: 'Tip',
+          type: 'tip',
+          status: 'completed',
+          stripePaymentIntentId: pi.paymentIntentId,
+          createdAt: serverTimestamp(),
+          paymentMethod: 'card',
+        });
+
+        if (appointmentId) {
+          const apptRef = doc(db, 'appointments', appointmentId);
+          await updateDoc(apptRef, {
+            tip: tipAmount,
+            updatedAt: serverTimestamp(),
+          });
+        }
+        console.log('Tip recorded, paymentId:', paymentRef.id);
+      } catch (persistErr) {
+        console.warn('Tip persisted with error (non-fatal):', persistErr);
+      }
+
       Alert.alert(
         'Tip Sent',
-        `Your $${tipAmount.toFixed(2)} tip has been sent to ${appointment.barberName}. Thank you!`,
-        [{ text: 'OK', onPress: () => navigation.goBack() }]
+        `Your $${tipAmount.toFixed(2)} tip has been sent to ${resolvedAppointment?.barberName || 'the barber'}. Thank you!`,
+        [{ text: 'OK', onPress: () => router.back() }]
       );
     } catch (error) {
       console.error('Error processing tip:', error);
-      setError('Failed to process tip payment');
+      setError(error?.message || 'Failed to process tip payment');
     } finally {
       setProcessing(false);
     }
   };
 
   const handleSkipTip = () => {
-    navigation.goBack();
+    router.back();
   };
 
   if (loading) {
@@ -114,6 +231,20 @@ const TipScreen = ({ route, navigation }) => {
       </View>
     );
   }
+
+  if (!resolvedAppointment) {
+    return (
+      <View style={styles.centered}>
+        <Ionicons name="alert-circle-outline" size={64} color="#f44336" />
+        <Text style={styles.loadingText}>No appointment data found for tipping.</Text>
+        <TouchableOpacity style={styles.skipButton} onPress={router.back}>
+          <Text style={styles.skipButtonText}>Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  const safeNumber = (n) => normalizeCurrencyValue(n);
 
   return (
     <ScrollView style={styles.container}>
@@ -131,17 +262,17 @@ const TipScreen = ({ route, navigation }) => {
         
         <View style={styles.detailRow}>
           <Text style={styles.detailLabel}>Barber:</Text>
-          <Text style={styles.detailValue}>{appointment.barberName}</Text>
+          <Text style={styles.detailValue}>{resolvedAppointment.barberName}</Text>
         </View>
         
         <View style={styles.detailRow}>
           <Text style={styles.detailLabel}>Service:</Text>
-          <Text style={styles.detailValue}>{appointment.serviceName}</Text>
+          <Text style={styles.detailValue}>{resolvedAppointment.serviceName}</Text>
         </View>
         
         <View style={styles.detailRow}>
           <Text style={styles.detailLabel}>Price:</Text>
-          <Text style={styles.detailValue}>${appointment.servicePrice.toFixed(2)}</Text>
+          <Text style={styles.detailValue}>${safeNumber(resolvedAppointment.servicePrice).toFixed(2)}</Text>
         </View>
       </View>
 
@@ -168,7 +299,7 @@ const TipScreen = ({ route, navigation }) => {
                 styles.tipOptionAmount,
                 selectedTip === option && styles.selectedTipLabel
               ]}>
-                ${((appointment.servicePrice * option.percent) / 100).toFixed(2)}
+                ${((safeNumber(resolvedAppointment.servicePrice) * option.percent) / 100).toFixed(2)}
               </Text>
             </TouchableOpacity>
           ))}

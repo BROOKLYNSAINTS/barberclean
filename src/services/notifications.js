@@ -72,27 +72,79 @@ function getAppointmentDate(dateStr, timeStr) {
 }
 
 export async function addAppointmentToCalendar(appointment, service = null, barber = null) {
+  console.log('📅 addAppointmentToCalendar called with:', { appointment, service, barber });
+  
+  // Get calendars
   const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
-  const defaultCalendar = calendars.find(cal => cal.allowsModifications) || calendars[0];
+  console.log('📅 Available calendars:', calendars.map(c => ({ 
+    id: c.id, 
+    title: c.title, 
+    source: c.source,
+    type: c.type,
+    allowsModifications: c.allowsModifications,
+    isPrimary: c.isPrimary 
+  })));
+  
+  // Prefer primary calendar or Google Calendar, fallback to first modifiable
+  let defaultCalendar = calendars.find(cal => cal.isPrimary && cal.allowsModifications);
+  
+  if (!defaultCalendar) {
+    // Try to find a Google calendar
+    defaultCalendar = calendars.find(cal => 
+      cal.allowsModifications && 
+      (cal.source?.name?.toLowerCase().includes('google') || 
+       cal.title?.toLowerCase().includes('google') ||
+       cal.source?.type === 'com.google')
+    );
+  }
+  
+  if (!defaultCalendar) {
+    // Fallback to first modifiable calendar
+    defaultCalendar = calendars.find(cal => cal.allowsModifications);
+  }
+  
+  if (!defaultCalendar) {
+    defaultCalendar = calendars[0];
+  }
+  
+  if (!defaultCalendar) {
+    throw new Error('No calendar available for modifications');
+  }
+  
+  console.log('📅 Using calendar:', {
+    title: defaultCalendar.title,
+    source: defaultCalendar.source,
+    isPrimary: defaultCalendar.isPrimary,
+    type: defaultCalendar.type
+  });
 
   // Sanitize and convert time to 24-hour format
   const time24 = to24Hour(appointment.time);
+  console.log('📅 Converted time:', time24);
+  
   const startDateStr = `${appointment.date}T${time24}:00`;
+  console.log('📅 Start date string:', startDateStr);
+  
   const startDate = new Date(startDateStr);
 
   if (isNaN(startDate.getTime())) {
     console.error('Invalid startDate:', { startDateStr, appointment });
     throw new RangeError('Date value out of bounds');
   }
+  
+  console.log('📅 Start date:', startDate);
 
   const duration = (service && service.duration) || 30;
   const endDate = new Date(startDate.getTime() + duration * 60000);
+  console.log('📅 End date:', endDate);
 
   // ✅ Fallbacks now check appointment.barberAddress and barberPhone
   const serviceName = (service && service.name) || appointment.serviceName || 'Appointment';
   const barberName = (barber && barber.name) || appointment.barberName || 'Barber';
   const barberAddress = (barber && barber.address) || appointment.barberAddress || '';
   const barberPhone = (barber && barber.phone) || appointment.barberPhone || '';
+
+  console.log('📅 Creating event with:', { serviceName, barberName, barberAddress, barberPhone });
 
   const eventId = await Calendar.createEventAsync(defaultCalendar.id, {
     title: `${serviceName} with ${barberName}`,
@@ -102,6 +154,7 @@ export async function addAppointmentToCalendar(appointment, service = null, barb
     timeZone: 'America/New_York',
   });
 
+  console.log('✅ Calendar event created with ID:', eventId);
   return eventId;
 }
 
@@ -238,40 +291,80 @@ export const saveNotificationToFirestore = async (userId, notification) => {
   try {
     if (!userId) {
       console.error('❌ No userId provided to saveNotificationToFirestore');
-      return;
+      throw new Error('userId is required');
     }
     
-    console.log('📤 Saving notification to Firestore:', { userId, notification });
+    if (!notification || !notification.id) {
+      console.error('❌ Invalid notification object:', notification);
+      throw new Error('notification.id is required');
+    }
     
-const notificationRef = doc(db, 'users', userId, 'notifications', notification.id || String(Date.now()));
-
-await setDoc(notificationRef, {
-  ...notification,
-  timestamp: new Date(),
-  read: false,
-});
+    console.log('📤 Attempting to save notification to Firestore:');
+    console.log('   - userId:', userId);
+    console.log('   - notificationId:', notification.id);
+    console.log('   - notification:', notification);
     
-    console.log('✅ Notification saved to Firestore successfully:', notification);
+    const notificationRef = doc(db, 'users', userId, 'notifications', notification.id);
+    
+    const dataToSave = {
+      ...notification,
+      timestamp: serverTimestamp(),
+      read: false,
+    };
+    
+    console.log('📤 Data to save:', dataToSave);
+    
+    await setDoc(notificationRef, dataToSave);
+    
+    console.log('✅ Notification saved to Firestore successfully');
+    console.log('   - Path: users/' + userId + '/notifications/' + notification.id);
+    return true;
   } catch (error) {
     console.error('❌ Error saving notification to Firestore:', error);
+    console.error('   - userId:', userId);
+    console.error('   - notification:', notification);
+    throw error;
   }
 };
 
 // Schedule appointment reminder (Hybrid: Local + Firestore)
 export const scheduleAppointmentReminder = async (appointment, userId) => {
+  console.log('🔔 scheduleAppointmentReminder called');
+  console.log('   - appointment:', appointment);
+  console.log('   - userId:', userId);
+  
   const { date, serviceName, barberName } = appointment;
   const appointmentId = appointment.id || appointment.appointmentId;
-  console.log('appointment:', appointment);
-  console.log('appointmentId:', appointmentId);
-  console.log('userId:', userId);
+  
+  if (!appointmentId) {
+    console.error('❌ No appointmentId found in appointment object');
+    return false;
+  }
+  
+  if (!userId) {
+    console.error('❌ No userId provided');
+    return false;
+  }
+  
+  console.log('   - appointmentId:', appointmentId);
+  console.log('   - date:', date);
+  console.log('   - serviceName:', serviceName);
+  console.log('   - barberName:', barberName);
+  
   try {
     const startTime = appointment.startTime || appointment.time;
-    if (!date || !startTime) throw new Error('Missing date or time');
+    console.log('   - startTime:', startTime);
+    
+    if (!date || !startTime) {
+      console.error('❌ Missing date or time:', { date, startTime });
+      throw new Error('Missing date or time');
+    }
     const appointmentDate = getAppointmentDate(date, startTime);
     const oneDayBefore = new Date(appointmentDate.getTime() - 24*60*60*1000);
     const oneHourBefore = new Date(appointmentDate.getTime() - 60*60*1000);
 
     if (oneDayBefore > new Date()) {
+      console.log('📅 Scheduling 24-hour reminder for:', oneDayBefore);
       const oneDayId = await Notifications.scheduleNotificationAsync({
         content: {
           title: 'Appointment Reminder',
@@ -282,23 +375,13 @@ export const scheduleAppointmentReminder = async (appointment, userId) => {
         },
         trigger: { date: oneDayBefore }
       });
-      if (userId) {
-        await saveNotificationToFirestore(userId, {
-          id: `reminder_24h_${appointmentId}`,
-          title: '24-Hour Reminder Set',
-          body: `Reminder set for 24 hours before ${date} at ${startTime}.`,
-          type: 'appointment_reminder',
-          appointmentId,
-          appointmentDate: date,
-          appointmentTime: startTime,
-          serviceName,
-          barberName,
-          localNotificationId: oneDayId
-        });
-      }
+      console.log('✅ 24-hour reminder scheduled with ID:', oneDayId);
+    } else {
+      console.log('⏭️ Skipping 24-hour reminder (appointment too soon)');
     }
 
     if (oneHourBefore > new Date()) {
+      console.log('📅 Scheduling 1-hour reminder for:', oneHourBefore);
       const oneHourId = await Notifications.scheduleNotificationAsync({
         content: {
           title: 'Upcoming Appointment',
@@ -309,21 +392,12 @@ export const scheduleAppointmentReminder = async (appointment, userId) => {
         },
         trigger: { date: oneHourBefore }
       });
-      if (userId) {
-        await saveNotificationToFirestore(userId, {
-          id: `reminder_1h_${appointmentId}`,
-          title: '1-Hour Reminder Set',
-          body: `Reminder set for 1 hour before ${date} at ${startTime}.`,
-          type: 'appointment_reminder',
-          appointmentId,
-          appointmentDate: date,
-          appointmentTime: startTime,
-          serviceName,
-          barberName,
-          localNotificationId: oneHourId
-        });
-      }
+      console.log('✅ 1-hour reminder scheduled with ID:', oneHourId);
+    } else {
+      console.log('⏭️ Skipping 1-hour reminder (appointment too soon)');
     }
+    
+    console.log('✅ Appointment reminders setup complete');
     return true;
   } catch (error) {
     console.error('[Reminder Debug] Error scheduling appointment reminder:', error);
@@ -335,11 +409,13 @@ export const cancelAppointmentNotifications = async (appointmentOrId, userId) =>
   try {
     const appointmentId = typeof appointmentOrId === 'string'
       ? appointmentOrId
-      : appointmentOrId?.id || appointmentOrId?.appointmentId || null;
+      : appointmentOrId?.id || appointmentOrId?.appointmentId;
+
     if (!appointmentId) {
-      console.warn('[Cancel Notifications] Missing appointmentId');
-      return { success:false, cancelledCount:0 };
+      console.error('[Cancel Notifications] No appointmentId provided');
+      return false;
     }
+    
     console.log('[Cancel Notifications] Cancelling notifications for appointment:', appointmentId);
 
     const scheduled = await Notifications.getAllScheduledNotificationsAsync();

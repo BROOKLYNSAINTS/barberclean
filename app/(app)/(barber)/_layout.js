@@ -85,6 +85,15 @@ export default function BarberTabLayout() {
           }}
         />
         <Tabs.Screen
+          name="faq"
+          options={{
+            title: "FAQ",
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="help-circle-outline" size={size} color={color} />
+            ),
+          }}
+        />
+        <Tabs.Screen
           name="chat-list"
           options={{
             title: "Chat List",
@@ -102,6 +111,16 @@ export default function BarberTabLayout() {
             ),
           }}
         />
+         <Tabs.Screen
+          name="edit-profile"
+          options={{
+            title: "Edit Profile",
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="person-circle-outline" size={size} color={color} />
+            ),
+          }}
+        />
+
         {/* Hidden screens in this tab group, accessed via router.push */}
         <Tabs.Screen name="bulletin-post-details" options={{ href: null, title: 'Post Details' }} />
         <Tabs.Screen name="subscription" options={{ href: null, title: 'Subscription' }} />
@@ -109,6 +128,8 @@ export default function BarberTabLayout() {
         <Tabs.Screen name="view-barber-profile" options={{ href: null, title: 'view profile' }} />
         <Tabs.Screen name="subscription-payment" options={{ href: null, title: 'Payment' }} />
         <Tabs.Screen name="new-chat" options={{ href: null, title: 'new chat' }} />
+        <Tabs.Screen name="all-appointments" options={{ href: null, title: 'all' }} />
+        <Tabs.Screen name="appointment-details" options={{ href: null, title: ' appointment details' }} />
       </Tabs>
   );
 }

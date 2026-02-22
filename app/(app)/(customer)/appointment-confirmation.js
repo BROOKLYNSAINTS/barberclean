@@ -13,8 +13,7 @@ import * as Calendar from 'expo-calendar';
 import * as Notifications from 'expo-notifications';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../../src/contexts/AuthContext';
-import { scheduleAppointmentReminder, scheduleTestReminder } from '../../../src/services/notifications';
-import DebugUser from '@/components/DebugUser';
+import { scheduleAppointmentReminder } from '../../../src/services/notifications';
 
 // ✅ Safe JSON parsing
 const safeParse = (input) => {
@@ -74,6 +73,11 @@ export default function AppointmentConfirmationScreen() {
   const barber = safeParse(params.barber);
   const service = safeParse(params.service);
 
+  // Debug logging
+  console.log('🔍 Confirmation - appointment:', appointment);
+  console.log('🔍 Confirmation - barber:', barber);
+  console.log('🔍 Confirmation - service:', service);
+
   const [loading, setLoading] = useState(false);
   const [calendarAdded, setCalendarAdded] = useState(false);
   const [autoRemindersSet, setAutoRemindersSet] = useState(false);
@@ -91,10 +95,26 @@ export default function AppointmentConfirmationScreen() {
       }
       
       try {
-        console.log('🔔 Setting up automatic reminders...', { appointment, userId: currentUser.uid });
-        await scheduleAppointmentReminder(appointment, currentUser.uid);
-        setAutoRemindersSet(true);
-        console.log('✅ Automatic reminders set successfully');
+        console.log('🔔 Setting up automatic reminders...', { 
+          appointment, 
+          userId: currentUser.uid,
+          appointmentId: appointment.id || appointment.appointmentId 
+        });
+        
+        // Ensure appointment has required fields
+        if (!appointment.date || !appointment.time) {
+          console.error('❌ Missing date or time in appointment:', appointment);
+          return;
+        }
+        
+        const success = await scheduleAppointmentReminder(appointment, currentUser.uid);
+        
+        if (success) {
+          setAutoRemindersSet(true);
+          console.log('✅ Automatic reminders set successfully');
+        } else {
+          console.error('❌ Failed to set reminders (returned false)');
+        }
       } catch (error) {
         console.error('❌ Error setting automatic reminders:', error);
       }
@@ -104,10 +124,21 @@ export default function AppointmentConfirmationScreen() {
   }, [appointment, currentUser, autoRemindersSet]);
 
   const formatDate = (dateString) => {
-    if (!dateString || typeof dateString !== 'string' || !dateString.includes('-')) return 'N/A';
+    console.log('🔍 formatDate input:', dateString, typeof dateString);
+    if (!dateString) return 'N/A';
+    
+    // Handle if dateString is already a Date object
+    if (dateString instanceof Date) {
+      return dateString.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    }
+    
+    // Convert to string if needed
+    const dateStr = String(dateString);
+    if (!dateStr.includes('-')) return 'N/A';
+    
     const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
     // Parse as local date to avoid UTC shift bug
-    const [year, month, day] = dateString.split('-').map(Number);
+    const [year, month, day] = dateStr.split('-').map(Number);
     if (isNaN(year) || isNaN(month) || isNaN(day)) return 'N/A';
     const dateObj = new Date(year, month - 1, day);
     return dateObj.toLocaleDateString(undefined, options);
@@ -175,23 +206,11 @@ export default function AppointmentConfirmationScreen() {
     // Keeping for reference but not using
     Alert.alert(
       'Info', 
-      'Reminders are automatically set when you book an appointment. Check your notification screen to see them!'
+      'Reminders are automatically set when you book an appointment.'
     );
   };
 
-  const testReminder = async () => {
-    try {
-      console.log('🧪 Testing reminder in 10 seconds...');
-      await scheduleTestReminder(appointment, currentUser.uid, 10);
-      Alert.alert(
-        'Test Reminder Scheduled', 
-        'A test reminder will appear in 10 seconds. Make sure your app is in the background to see the notification!'
-      );
-    } catch (error) {
-      console.error('Error scheduling test reminder:', error);
-      Alert.alert('Error', 'Failed to schedule test reminder.');
-    }
-  };
+
   const handleDone = () => {
     router.replace({
       pathname: '/(app)/(customer)/appointment-details',
@@ -199,6 +218,20 @@ export default function AppointmentConfirmationScreen() {
         appointment: JSON.stringify(appointment),
         barber: JSON.stringify(barber),
         service: JSON.stringify(service),
+      },
+    });
+  };
+
+  const handleTip = () => {
+    router.push({
+      pathname: '/(app)/(customer)/tip',
+      params: {
+        appointment: JSON.stringify({
+          ...appointment,
+          barberName: barber?.name,
+          serviceName: service?.name,
+          servicePrice: service?.price ?? appointment?.servicePrice ?? 0,
+        }),
       },
     });
   };
@@ -214,7 +247,6 @@ export default function AppointmentConfirmationScreen() {
 
   return (
     <ScrollView style={styles.container}>
-      <DebugUser screenName="Appointment Confirmation" />
       <View style={styles.confirmationCard}>
         <Ionicons name="checkmark-circle" size={64} color="#4CAF50" style={styles.confirmationIcon} />
         <Text style={styles.confirmationTitle}>Appointment Confirmed!</Text>
@@ -246,12 +278,12 @@ export default function AppointmentConfirmationScreen() {
 
         <View style={styles.detailRow}>
           <Text style={styles.detailLabel}>Duration:</Text>
-          <Text style={styles.detailValue}>{service.duration || 30} minutes</Text>
+          <Text style={styles.detailValue}>{service?.duration ?? appointment?.serviceDuration ?? 30} minutes</Text>
         </View>
 
         <View style={styles.detailRow}>
           <Text style={styles.detailLabel}>Price:</Text>
-          <Text style={styles.detailValue}>${(service.price || 0).toFixed(2)}</Text>
+          <Text style={styles.detailValue}>${(service?.price ?? appointment?.servicePrice ?? 0).toFixed(2)}</Text>
         </View>
 
         {barber.phone && (
@@ -295,27 +327,20 @@ export default function AppointmentConfirmationScreen() {
         </View>
       </View>
 
-      <TouchableOpacity style={styles.doneButton} onPress={handleDone}>
-        <Text style={styles.doneButtonText}>Done</Text>
-      </TouchableOpacity>
-
-      {/* Test Button - Remove this in production */}
-      <TouchableOpacity 
-        style={[styles.doneButton, { backgroundColor: '#FF9800', marginTop: 8 }]} 
-        onPress={testReminder}
-      >
-        <Text style={styles.doneButtonText}>🧪 Test Reminder (10 seconds)</Text>
-      </TouchableOpacity>
+      <View style={{ marginHorizontal: 16, marginBottom: 16 }}>
+        <TouchableOpacity style={styles.doneButton} onPress={handleDone}>
+          <Text style={styles.doneButtonText}>Done</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.doneButton, { backgroundColor: '#4CAF50', marginTop: 8 }]} onPress={handleTip}>
+          <Text style={styles.doneButtonText}>Add Tip</Text>
+        </TouchableOpacity>
+      </View>
 
       <Text style={styles.reminderInfoText}>
         Reminders are automatically set for 24 hours and 1 hour before your appointment. 
-        You can view them in the notifications tab.
+        
       </Text>
 
-      <View style={{ padding: 10, backgroundColor: '#ffe' }}>
-        <Text>Raw appointment.date: {String(appointment?.date)}</Text>
-        <Text>Raw appointment.time: {String(appointment?.time)}</Text>
-      </View>
     </ScrollView>
   );
 }

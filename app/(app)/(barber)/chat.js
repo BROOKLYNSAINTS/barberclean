@@ -1,5 +1,3 @@
-// app/(app)/(barber)/chat.js
-
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -39,7 +37,6 @@ export default function BarberChatScreen() {
   const { currentUser } = useAuth();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-
   const rawParams = useLocalSearchParams();
   const threadId = unwrapThreadId(rawParams.threadId);
 
@@ -48,30 +45,38 @@ export default function BarberChatScreen() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
 
-  if (!currentUser?.uid) {
-    return (
-      <SafeAreaView style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#007BFF" />
-        <Text style={styles.loadingText}>Loading user...</Text>
-      </SafeAreaView>
-    );
-  }
+  useEffect(() => {
+    if (!currentUser?.uid || !threadId) {
+      setLoading(false);
+      return;
+    }
 
-  if (!threadId) {
-    return (
-      <SafeAreaView style={styles.errorContainer}>
-        <Ionicons name="alert-circle-outline" size={64} color="#f44336" />
-        <Text style={styles.errorTitle}>Chat Error</Text>
-        <Text style={styles.errorText}>No valid chat thread ID was found.</Text>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Text style={styles.backButtonText}>Go Back</Text>
-        </TouchableOpacity>
-      </SafeAreaView>
+    const messagesQuery = query(
+      collection(db, 'chatThreads', threadId, 'messages'),
+      orderBy('createdAt', 'asc')
     );
-  }
+
+    const unsubscribe = onSnapshot(
+      messagesQuery,
+      (snapshot) => {
+        const fetched = snapshot.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        }));
+        setMessages(fetched);
+        setLoading(false);
+      },
+      (err) => {
+        console.error('onSnapshot error:', err);
+        setLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [threadId, currentUser?.uid]);
 
   const sendMessage = async () => {
-    if (!newMessage.trim() || sending) return;
+    if (!newMessage.trim() || sending || !currentUser?.uid) return;
 
     try {
       setSending(true);
@@ -99,48 +104,27 @@ export default function BarberChatScreen() {
     }
   };
 
-  useEffect(() => {
-    const messagesQuery = query(
-      collection(db, 'chatThreads', threadId, 'messages'),
-      orderBy('createdAt', 'asc')
-    );
-
-    const unsubscribe = onSnapshot(
-      messagesQuery,
-      (snapshot) => {
-        const fetched = snapshot.docs.map((d) => ({
-          id: d.id,
-          ...d.data(),
-        }));
-        setMessages(fetched);
-        setLoading(false);
-      },
-      (err) => {
-        console.error('onSnapshot error:', err);
-        setLoading(false);
-      }
-    );
-
-    return () => unsubscribe();
-  }, [threadId]);
-
-  const renderItem = ({ item }) => {
-    const isMine = item.senderId === currentUser.uid;
-
+  if (!currentUser?.uid) {
     return (
-      <View style={[styles.messageBubble, isMine ? styles.myMessage : styles.theirMessage]}>
-        <Text style={[styles.messageText, isMine ? styles.myMessageText : styles.theirMessageText]}>
-          {item.text}
-        </Text>
-
-        {!!item.createdAt?.toDate && (
-          <Text style={[styles.messageTime, isMine ? styles.myMessageTime : styles.theirMessageTime]}>
-            {new Date(item.createdAt.toDate()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-          </Text>
-        )}
-      </View>
+      <SafeAreaView style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#007BFF" />
+        <Text style={styles.loadingText}>Loading user...</Text>
+      </SafeAreaView>
     );
-  };
+  }
+
+  if (!threadId) {
+    return (
+      <SafeAreaView style={styles.errorContainer}>
+        <Ionicons name="alert-circle-outline" size={64} color="#f44336" />
+        <Text style={styles.errorTitle}>Chat Error</Text>
+        <Text style={styles.errorText}>No valid chat thread ID was found.</Text>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <Text style={styles.backButtonText}>Go Back</Text>
+        </TouchableOpacity>
+      </SafeAreaView>
+    );
+  }
 
   if (loading) {
     return (
@@ -150,6 +134,42 @@ export default function BarberChatScreen() {
       </SafeAreaView>
     );
   }
+
+  const renderItem = ({ item }) => {
+    const isMine = item.senderId === currentUser.uid;
+
+    return (
+      <View
+        style={[
+          styles.messageBubble,
+          isMine ? styles.myMessage : styles.theirMessage,
+        ]}
+      >
+        <Text
+          style={[
+            styles.messageText,
+            isMine ? styles.myMessageText : styles.theirMessageText,
+          ]}
+        >
+          {item.text}
+        </Text>
+
+        {!!item.createdAt?.toDate && (
+          <Text
+            style={[
+              styles.messageTime,
+              isMine ? styles.myMessageTime : styles.theirMessageTime,
+            ]}
+          >
+            {new Date(item.createdAt.toDate()).toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
+          </Text>
+        )}
+      </View>
+    );
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -185,7 +205,11 @@ export default function BarberChatScreen() {
             />
             <TouchableOpacity
               onPress={sendMessage}
-              style={[styles.sendButton, (sending || newMessage.trim() === '') && styles.sendButtonDisabled]}
+              style={[
+                styles.sendButton,
+                (sending || newMessage.trim() === '') &&
+                  styles.sendButtonDisabled,
+              ]}
               disabled={sending || newMessage.trim() === ''}
             >
               {sending ? (
@@ -205,25 +229,46 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f2f5' },
   keyboardContainer: { flex: 1 },
 
-  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f0f2f5' },
-  loadingText: { marginTop: 10, color: '#666', fontSize: 16 },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: { marginTop: 10, color: '#666' },
 
-  errorContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f0f2f5', padding: 20 },
-  errorTitle: { fontSize: 20, fontWeight: 'bold', color: '#333', marginTop: 16, marginBottom: 8 },
-  errorText: { fontSize: 14, color: '#666', textAlign: 'center', marginBottom: 20 },
-  backButton: { backgroundColor: '#007BFF', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8 },
-  backButtonText: { color: '#fff', fontWeight: 'bold' },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  errorTitle: { fontSize: 20, fontWeight: 'bold', marginTop: 16 },
+  errorText: { marginTop: 6, textAlign: 'center', color: '#666' },
+
+  backButton: {
+    marginTop: 20,
+    backgroundColor: '#007BFF',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  backButtonText: { color: '#fff', fontWeight: '600' },
 
   messagesList: { padding: 16, paddingBottom: 20, flexGrow: 1 },
 
   messageBubble: {
     padding: 12,
-    marginVertical: 2,
+    marginVertical: 4,
     borderRadius: 18,
     maxWidth: '80%',
   },
-  myMessage: { alignSelf: 'flex-end', backgroundColor: '#007BFF', marginLeft: '20%' },
-  theirMessage: { alignSelf: 'flex-start', backgroundColor: '#fff', marginRight: '20%', borderWidth: 1, borderColor: '#e0e0e0' },
+  myMessage: { alignSelf: 'flex-end', backgroundColor: '#007BFF' },
+  theirMessage: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
 
   messageText: { fontSize: 16 },
   myMessageText: { color: '#fff' },
@@ -231,11 +276,35 @@ const styles = StyleSheet.create({
 
   messageTime: { fontSize: 11, marginTop: 4 },
   myMessageTime: { color: 'rgba(255,255,255,0.7)', textAlign: 'right' },
-  theirMessageTime: { color: '#999', textAlign: 'left' },
+  theirMessageTime: { color: '#999' },
 
-  inputContainer: { backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#e0e0e0', padding: 16 },
-  inputWrapper: { flexDirection: 'row', alignItems: 'flex-end', backgroundColor: '#f8f9fa', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 8 },
+  inputContainer: {
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+    padding: 12,
+  },
+
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    backgroundColor: '#f8f9fa',
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+
   input: { flex: 1, fontSize: 16, color: '#333', maxHeight: 100 },
-  sendButton: { marginLeft: 12, backgroundColor: '#007BFF', borderRadius: 20, width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
+
+  sendButton: {
+    marginLeft: 12,
+    backgroundColor: '#007BFF',
+    borderRadius: 20,
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
   sendButtonDisabled: { backgroundColor: '#ccc' },
 });

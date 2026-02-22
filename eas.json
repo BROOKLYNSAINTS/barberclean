@@ -1,8 +1,16 @@
 {
   "cli": {
-    "version": ">= 13.0.0"
+    "version": ">= 13.0.0",
+    "promptToConfigurePushNotifications": false
   },
   "build": {
+    "ios-simulator": {
+      "ios": {
+        "simulator": true
+      },
+      "distribution": "internal",
+      "developmentClient": false
+    },
     "preview": {
       "environment": "preview",
       "developmentClient": false,
@@ -24,6 +32,10 @@
       "developmentClient": false,
       "node": "20.19.4",
       "channel": "production",
+      "distribution": "store",
+      "env": {
+        "EXPO_PUBLIC_BACKEND_URL": "https://barber-backend-ten.vercel.app"
+      },
       "android": {
         "buildType": "app-bundle"
       },
@@ -39,8 +51,13 @@
     "preview": {
       "android": {
         "serviceAccountKeyPath": "./google-play-service-account.json",
-        "track": "internal",
+        "track": "alpha",
         "releaseStatus": "draft"
+      },
+      "ios": {
+        "appleId": "coach@brooklynsaints.com",
+        "ascAppId": "6746369434",
+        "appleTeamId": "42G5N5JFV7"
       }
     },
     "production": {

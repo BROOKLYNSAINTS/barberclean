@@ -1,517 +1,360 @@
-import { Platform, Linking, Alert } from 'react-native';
-import { initStripe, useStripe } from '@stripe/stripe-react-native';
-import Constants from 'expo-constants';
-import { db } from '@/services/firebase';
-import { doc, setDoc, getDoc, updateDoc, collection, addDoc, serverTimestamp } from 'firebase/firestore';
-
+import { initStripe, useStripe } from "@stripe/stripe-react-native";
+import Constants from "expo-constants";
+import { auth } from "@/services/firebase";
 
 const extra = Constants.expoConfig?.extra;
 
-// Get Stripe publishable key from environment (EAS) or extra fallback
 const STRIPE_PUBLISHABLE_KEY =
-  process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY || extra?.stripePublishableKey;
-console.log('me (STRIPE_PUBLISHABLE_KEY):', STRIPE_PUBLISHABLE_KEY);
+  process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY ||
+  extra?.stripePublishableKey;
 
-// Temporary debug: show part of the key on device
-try {
-  if (STRIPE_PUBLISHABLE_KEY) {
-    Alert.alert('Stripe key', STRIPE_PUBLISHABLE_KEY.slice(0, 18));
-  } else {
-    Alert.alert('Stripe key', 'MISSING');
+const VERCEL_BYPASS = process.env.EXPO_PUBLIC_VERCEL_BYPASS_SECRET;
+
+function getBackendUrl() {
+  return extra?.backendUrl || process.env.EXPO_PUBLIC_BACKEND_URL;
+}
+
+async function parseResponsePayload(response) {
+  const raw = await response.text();
+  if (!raw) return { data: null, raw: "" };
+
+  try {
+    return { data: JSON.parse(raw), raw };
+  } catch {
+    return { data: null, raw };
   }
-} catch (e) {
-  // ignore alert errors in non-UI contexts
 }
 
-// Debug logging
-console.log('🔑 Stripe Configuration Check:');
-console.log(
-  '- process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY:',
-  !!process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY
-);
-console.log('- Constants.expoConfig?.extra?.stripePublishableKey:', !!extra?.stripePublishableKey);
-console.log('- Final STRIPE_PUBLISHABLE_KEY loaded:', !!STRIPE_PUBLISHABLE_KEY);
-console.log('- Key starts with pk_test:', STRIPE_PUBLISHABLE_KEY?.startsWith('pk_test'));
-console.log('- Key length:', STRIPE_PUBLISHABLE_KEY?.length);
-
-if (!STRIPE_PUBLISHABLE_KEY) {
-  console.error('⚠️ STRIPE_PUBLISHABLE_KEY not configured properly');
-  throw new Error('Stripe publishable key is required');
+function resolveBackendErrorMessage(data, raw, fallback) {
+  if (typeof data?.error === "string" && data.error) return data.error;
+  if (typeof data?.message === "string" && data.message) return data.message;
+  if (typeof raw === "string" && raw.trim()) return raw.trim().slice(0, 200);
+  return fallback;
 }
 
-// Initialize Stripe
+function normalizeAmountValue(input) {
+  if (typeof input === "number") {
+    return Number.isFinite(input) ? input : NaN;
+  }
+
+  if (typeof input === "string") {
+    const cleaned = input.replace(/[^0-9.-]/g, "");
+    if (!cleaned) return NaN;
+    const parsed = Number(cleaned);
+    return Number.isFinite(parsed) ? parsed : NaN;
+  }
+
+  return NaN;
+}
+
+async function getAuthHeaders() {
+  const base = { "Content-Type": "application/json" };
+  try {
+    const user = auth.currentUser;
+    if (!user) return base;
+    const token = await user.getIdToken();
+    return { ...base, Authorization: `Bearer ${token}` };
+  } catch {
+    return base;
+  }
+}
+
+/* =========================================================
+   INITIALIZE STRIPE
+========================================================= */
 export const initializeStripe = async () => {
-  try {
-    await initStripe({
-      publishableKey: STRIPE_PUBLISHABLE_KEY,
-      merchantIdentifier: 'merchant.com.barberapp',
-      urlScheme: 'barberapp',
-    });
-    console.log('✅ Stripe initialized successfully');
-  } catch (error) {
-    console.error('Error initializing Stripe:', error);
-    throw error;
-  }
+  await initStripe({
+    publishableKey: STRIPE_PUBLISHABLE_KEY,
+    merchantIdentifier: "merchant.com.barberapp",
+    urlScheme: "barberclean",
+  });
 };
 
-// Create PaymentIntent via backend
-const createPaymentIntent = async (amount, description, metadata, customerEmail = null) => {
-  try {
-    const BACKEND_URL = extra?.backendUrl || process.env.EXPO_PUBLIC_BACKEND_URL;
-    
-    console.log('🔧 Calling backend to create payment intent...');
-    console.log('🔧 Backend URL:', BACKEND_URL);
-    console.log('🔧 Amount:', amount, 'Description:', description);
-    console.log('🔧 Metadata:', metadata);
-    console.log('🔧 Customer Email:', customerEmail);
-    
-    const requestBody = {
-      amount: amount, // Send $20 as 20, let backend convert to cents
-      currency: 'usd',
-      description,
-      metadata,
-    };
-    
-    // Add customer_email if provided
-    if (customerEmail) {
-      requestBody.customer_email = customerEmail;
-    }
-    
-    const response = await fetch(`${BACKEND_URL}/api/create-payment-intent`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(requestBody),
-    });
-    
-    const data = await response.json();
-    
-    if (!response.ok) {
-      console.error('Backend error:', data);
-      throw new Error(data.error || 'Failed to create payment intent');
-    }
-    
-    console.log('✅ Payment intent created successfully:', data.paymentIntentId);
-    console.log('🔍 clientSecret exists:', !!data.clientSecret);
-    console.log('🔍 ephemeralKey exists:', !!data.ephemeralKey);
-    console.log('🔍 customer exists:', !!data.customer);
-    console.log('🔍 ephemeralKey type:', typeof data.ephemeralKey);
-    console.log('🔍 customer type:', typeof data.customer);
-    
-    // Extract the actual values we need
-    const result = {
-      clientSecret: data.clientSecret,
-      ephemeralKey: typeof data.ephemeralKey === 'string' ? data.ephemeralKey : data.ephemeralKey?.secret,
-      customer: typeof data.customer === 'string' ? data.customer : data.customer?.id,
-      paymentIntentId: data.paymentIntentId
-    };
-    
-    console.log('🔍 Extracted values:', result);
-    return result;
-    
-  } catch (error) {
-    console.error('Error calling backend:', error);
-    throw new Error('Failed to create payment intent');
+/* =========================================================
+   SERVICE PAYMENT
+========================================================= */
+
+export const createAndPresentServicePaymentSheet = async (
+  stripeHook,
+  appointmentId,
+  description = "Barber Service"
+) => {
+  const { initPaymentSheet, presentPaymentSheet } = stripeHook;
+
+  const BACKEND_URL = getBackendUrl();
+  if (!BACKEND_URL) throw new Error("Backend not configured");
+
+  const headers = await getAuthHeaders();
+
+  const url = `${BACKEND_URL}/api/create-payment-intent${
+    VERCEL_BYPASS ? `?x-vercel-protection-bypass=${VERCEL_BYPASS}` : ""
+  }`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ appointmentId }),
+  });
+
+  const { data, raw } = await parseResponsePayload(response);
+
+  if (!response.ok) {
+    throw new Error(
+      resolveBackendErrorMessage(data, raw, "Failed to create payment intent")
+    );
   }
+
+  const paymentIntentClientSecret =
+    data?.paymentIntent ||
+    data?.paymentIntentClientSecret ||
+    data?.clientSecret ||
+    null;
+
+  if (!paymentIntentClientSecret) {
+    throw new Error(
+      "Backend response missing PaymentIntent client secret."
+    );
+  }
+
+  const customerId = data?.customer || data?.customerId || null;
+  const customerEphemeralKeySecret =
+    data?.ephemeralKey || data?.ephemeralKeySecret || null;
+
+  const paymentSheetConfig = {
+    merchantDisplayName: "ScheduleSync AI",
+    paymentIntentClientSecret,
+    allowsDelayedPaymentMethods: false,
+    returnURL: "barberclean://payment-return",
+  };
+
+  if (customerId && customerEphemeralKeySecret) {
+    paymentSheetConfig.customerId = customerId;
+    paymentSheetConfig.customerEphemeralKeySecret = customerEphemeralKeySecret;
+  }
+
+  const { error: initError } = await initPaymentSheet(paymentSheetConfig);
+
+  if (initError) throw new Error(initError.message);
+
+  const { error: presentError } = await presentPaymentSheet();
+
+  if (presentError) {
+    if (presentError.code === "Canceled") {
+      return { success: false, canceled: true };
+    }
+    throw new Error(presentError.message);
+  }
+
+  return { success: true };
 };
 
-// Create Stripe Connect account for barber
-const createConnectAccount = async (userId, email) => {
-  try {
-    const BACKEND_URL = extra?.backendUrl || process.env.EXPO_PUBLIC_BACKEND_URL;
-    
-    console.log('🔗 Creating Stripe Connect account for barber...');
-    console.log('🔗 Backend URL:', BACKEND_URL);
-    console.log('🔗 User ID:', userId, 'Email:', email);
-    console.log('🔗 Full URL:', `${BACKEND_URL}/api/create-connect-account`);
-    
-    const requestBody = {
-      userId,
-      email,
-      businessType: 'individual'
-    };
-    console.log('🔗 Request body:', JSON.stringify(requestBody));
-    
-    const response = await fetch(`${BACKEND_URL}/api/create-connect-account`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(requestBody),
-    });
-    
-    console.log('🔗 Response status:', response.status);
-    console.log('🔗 Response ok:', response.ok);
-    console.log('🔗 Response headers:', JSON.stringify([...response.headers]));
-    
-    const responseText = await response.text();
-    console.log('🔗 Raw response text:', responseText);
-    
-    let data;
-    try {
-      data = JSON.parse(responseText);
-      console.log('🔗 Parsed response data:', JSON.stringify(data));
-    } catch (parseError) {
-      console.error('🔗 Failed to parse response as JSON:', parseError);
-      throw new Error('Invalid response from backend: ' + responseText);
-    }
-    
-    if (!response.ok) {
-      console.error('Backend error:', data);
-      throw new Error(data.error || 'Failed to create Connect account');
-    }
-    
-    console.log('✅ Connect account created:', data.accountId);
-    return data;
-    
-  } catch (error) {
-    console.error('Error creating Connect account:', error);
-    throw new Error('Failed to create Connect account');
-  }
-};
+/* =========================================================
+   TIP PAYMENT
+========================================================= */
 
-// Create and present payment sheet for service payment
-export const createAndPresentServicePaymentSheet = async (stripeHook, userId, barberId, appointmentId, amount, description = 'Barber Service') => {
-  try {
-    console.log('🏦 Creating payment intent for service payment...', { amount, appointmentId });
-    
-    const { initPaymentSheet, presentPaymentSheet } = stripeHook;
-    
-    // Step 1: Call backend to create PaymentIntent
-    const paymentIntentResponse = await createPaymentIntent(amount, description, {
-      userId,
-      barberId,
-      appointmentId
-    });
-    
-    const { clientSecret, ephemeralKey, customer, paymentIntentId } = paymentIntentResponse;
-    
-    // Step 2: Initialize the payment sheet
-    const { error: initError } = await initPaymentSheet({
-      merchantDisplayName: 'Barber Services',
-      customerId: customer,
-      customerEphemeralKeySecret: ephemeralKey,
-      paymentIntentClientSecret: clientSecret,
-      allowsDelayedPaymentMethods: false,
-      defaultBillingDetails: {
-        name: 'Customer',
-      },
-      returnURL: 'barberapp://payment-return',
-    });
-    
-    if (initError) {
-      console.error('Error initializing payment sheet:', initError);
-      throw new Error(`Payment initialization failed: ${initError.message}`);
-    }
-    
-    // Step 3: Present the payment sheet
-    const { error: presentError } = await presentPaymentSheet();
-    
-    if (presentError) {
-      if (presentError.code === 'Canceled') {
-        return { success: false, canceled: true };
-      }
-      console.error('Error presenting payment sheet:', presentError);
-      throw new Error(`Payment failed: ${presentError.message}`);
-    }
-    
-    // Step 4: Payment successful, update Firestore
-    console.log('💳 Payment completed successfully!');
-    
-    // Create payment record
-    const paymentRef = await addDoc(collection(db, 'payments'), {
-      customerId: userId,
-      barberId,
-      appointmentId,
-      amount,
-      description,
-      type: 'service',
-      status: 'completed',
-      stripePaymentIntentId: paymentIntentId,
-      createdAt: serverTimestamp(),
-      paymentMethod: 'card'
-    });
-    
-    // Record the transaction
-    await addDoc(collection(db, 'transactions'), {
-      userId,
-      barberId,
-      appointmentId,
-      paymentId: paymentRef.id,
-      type: 'service_payment',
-      amount,
-      description,
-      status: 'completed',
-      stripePaymentIntentId: paymentIntentId,
-      createdAt: serverTimestamp()
-    });
-    
-    // Update appointment with payment status
-    const appointmentRef = doc(db, 'appointments', appointmentId);
-    await updateDoc(appointmentRef, {
-      paymentStatus: 'paid',
-      paidAmount: amount,
-      paidAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    });
-    
-    console.log('✅ Payment and records updated successfully');
-    
-    return { 
-      success: true, 
-      paymentId: paymentRef.id,
-      paymentIntentId: paymentIntentId
-    };
-    
-  } catch (error) {
-    console.error('Error in payment flow:', error);
-    throw error;
-  }
-};
+export const createTipPaymentSheet = async (
+  userId,
+  tipAmount,
+  appointmentId = null,
+  barberId = null
+) => {
+  const BACKEND_URL = getBackendUrl();
+  if (!BACKEND_URL) throw new Error("Backend not configured");
 
-// Create subscription with setup intent for future payments
-export const createSubscriptionPaymentSheet = async (stripeHook, userId, priceId, userEmail) => {
-  try {
-    console.log('🔔 Creating subscription setup for user:', userId);
-    
-    const { initPaymentSheet, presentPaymentSheet } = stripeHook;
-    
-    // Step 1: Call backend to create PaymentIntent for subscription
-    const paymentIntentResponse = await createPaymentIntent(30, 'Barber Subscription - First Month', {
-      userId,
-      type: 'subscription',
-      priceId
-    }, userEmail);
-    
-    const { clientSecret, ephemeralKey, customer, paymentIntentId } = paymentIntentResponse;
-    
-    // Step 2: Initialize the payment sheet
-    const { error: initError } = await initPaymentSheet({
-      merchantDisplayName: 'Barber Services',
-      customerId: customer,
-      customerEphemeralKeySecret: ephemeralKey,
-      paymentIntentClientSecret: clientSecret,
-      allowsDelayedPaymentMethods: false,
-      defaultBillingDetails: {
-        name: 'Barber Subscription',
-      },
-      returnURL: 'barberapp://subscription-return',
-    });
-    
-    if (initError) {
-      console.error('Error initializing payment sheet:', initError);
-      throw new Error(`Payment initialization failed: ${initError.message}`);
-    }
-    
-    // Step 3: Present the payment sheet
-    const { error: presentError } = await presentPaymentSheet();
-    
-    if (presentError) {
-      if (presentError.code === 'Canceled') {
-        return { success: false, canceled: true };
-      }
-      console.error('Error presenting payment sheet:', presentError);
-      throw new Error(`Payment failed: ${presentError.message}`);
-    }
-    
-    // Step 4: Payment successful, create subscription records
-    console.log('💳 Subscription payment completed successfully!');
-    
-    const subscriptionId = 'sub_' + Date.now();
-    console.log('📝 Created subscription ID:', subscriptionId);
-    
-    // Create subscription payment record
-    console.log('📝 Step 1: Creating payment record in Firestore...');
-    let paymentRef;
-    try {
-      paymentRef = await addDoc(collection(db, 'payments'), {
-        customerId: userId,
-        subscriptionId,
-        amount: 30,
-        description: 'Barber Subscription - First Month',
-        type: 'subscription',
-        status: 'completed',
-        stripePaymentIntentId: paymentIntentId,
-        createdAt: serverTimestamp(),
-        paymentMethod: 'card'
+  const parsedAmount = normalizeAmountValue(tipAmount);
+  const parsedAmountCents = Math.round(parsedAmount * 100);
+  if (
+    !Number.isFinite(parsedAmount) ||
+    parsedAmount <= 0 ||
+    !Number.isFinite(parsedAmountCents) ||
+    parsedAmountCents <= 0
+  ) {
+    throw new Error("Invalid tip amount");
+  }
+
+  const basePayload = {
+    userId,
+    appointmentId,
+    ...(barberId ? { barberId } : {}),
+  };
+
+  const payloadVariants = [
+    { ...basePayload, amount: parsedAmount },
+    { ...basePayload, amountCents: parsedAmountCents },
+    { ...basePayload, tipAmount: parsedAmount },
+    { ...basePayload, tipAmountCents: parsedAmountCents },
+    {
+      ...basePayload,
+      amount: parsedAmount,
+      amountCents: parsedAmountCents,
+      tipAmount: parsedAmount,
+      tipAmountCents: parsedAmountCents,
+    },
+  ];
+  const endpointPaths = [
+    "/api/create-tip-payment-intent",
+    "/api/create-tip-intent",
+  ];
+
+  let lastError = "Failed to create tip payment intent";
+  let sawTipValidationError = false;
+
+  for (const path of endpointPaths) {
+    for (const body of payloadVariants) {
+      const url = `${BACKEND_URL}${path}${
+        VERCEL_BYPASS ? `?x-vercel-protection-bypass=${VERCEL_BYPASS}` : ""
+      }`;
+
+      const response = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
       });
-      console.log('✅ Payment record created:', paymentRef.id);
-    } catch (error) {
-      console.error('❌ Step 1 ERROR:', error.message);
-      console.error('❌ Step 1 ERROR CODE:', error.code);
-      throw error;
-    }
-    
-    // Record the subscription transaction
-    console.log('📝 Step 2: Creating transaction record in Firestore...');
-    try {
-      await addDoc(collection(db, 'transactions'), {
-        userId,
-        subscriptionId,
-        paymentId: paymentRef.id,
-        type: 'subscription_payment',
-        amount: 30,
-        description: 'Barber Subscription - First Month',
-        status: 'completed',
-        stripePaymentIntentId: paymentIntentId,
-        createdAt: serverTimestamp()
-      });
-      console.log('✅ Transaction record created');
-    } catch (error) {
-      console.error('❌ Step 2 ERROR:', error.message);
-      console.error('❌ Step 2 ERROR CODE:', error.code);
-      throw error;
-    }
-    
-    // Store subscription info in user document
-    console.log('📝 Step 3: Updating user document with subscription...');
-    const userRef = doc(db, 'users', userId);
-    try {
-      await setDoc(userRef, {
-        subscription: {
-          status: 'active',
-          plan: 'barber_monthly',
-          subscriptionId,
-          stripePaymentIntentId: paymentIntentId,
-          startDate: new Date().toISOString(),
-          nextBillingDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days
-          amount: 30,
-          currency: 'usd',
-          priceId: priceId,
-          type: 'manual_billing'
-        },
-        updatedAt: serverTimestamp()
-      }, { merge: true });
-      console.log('✅ User document updated');
-    } catch (error) {
-      console.error('❌ Step 3 ERROR:', error.message);
-      console.error('❌ Step 3 ERROR CODE:', error.code);
-      console.error('❌ Step 3 FULL ERROR:', JSON.stringify(error));
-      throw error;
-    }
-    
-    console.log('✅ Subscription stored in Firestore');
-    
-    // Step 5: Create Stripe Connect account for barber to receive payments
-    let connectAccountId = null;
-    let onboardingUrl = null;
-    
-    try {
-      console.log('🔗 Setting up Connect account for barber...');
-      const connectResponse = await createConnectAccount(userId, userEmail);
-      connectAccountId = connectResponse.accountId;
-      onboardingUrl = connectResponse.onboardingUrl;
-      
-      // Store Connect account ID in Firestore
-      await setDoc(userRef, {
-        'stripeConnectAccountId': connectAccountId,
-        'stripeConnectOnboardingComplete': false,
-        updatedAt: serverTimestamp()
-      }, { merge: true });
-      
-      console.log('✅ Connect account ID stored in Firestore');
-      
-    } catch (connectError) {
-      console.error('⚠️ Error creating Connect account (non-fatal):', connectError);
-      // Don't fail the whole flow if Connect fails
-    }
-    
-    return { 
-      success: true, 
-      subscriptionId,
-      paymentIntentId: paymentIntentId,
-      connectAccountId,
-      onboardingUrl
-    };
-    
-  } catch (error) {
-    console.error('Error in subscription setup:', error);
-    throw error;
-  }
-};
 
-// Create payment sheet for tip
-export const createTipPaymentSheet = async (userId, amount, appointmentId) => {
-  try {
-    const response = await createPaymentIntent(amount, 'Tip', { userId, appointmentId, type: 'tip' });
-    return response;
-  } catch (error) {
-    console.error('Error creating tip payment sheet:', error);
-    throw error;
-  }
-};
+      const { data, raw } = await parseResponsePayload(response);
 
-// Get subscription status
-export const getSubscriptionStatus = async (userId) => {
-  try {
-    const userRef = doc(db, 'users', userId);
-    const userDoc = await getDoc(userRef);
-    
-    if (userDoc.exists()) {
-      const userData = userDoc.data();
-      
-      if (userData.subscription && userData.subscription.status === 'active') {
-        const endDate = new Date(userData.subscription.endDate);
-        const now = new Date();
-        
-        if (endDate < now) {
-          await updateDoc(userRef, {
-            'subscription.status': 'expired',
-            updatedAt: serverTimestamp()
-          });
-          
-          return { status: 'expired' };
+      if (!response.ok) {
+        const errorMessage = resolveBackendErrorMessage(data, raw, lastError);
+        lastError = errorMessage;
+
+        if (response.status === 404) continue;
+
+        if (/invalid tip amount/i.test(errorMessage)) {
+          sawTipValidationError = true;
+          continue;
         }
-        
-        return { 
-          status: 'active',
-          endDate: userData.subscription.endDate,
-          plan: userData.subscription.plan
-        };
-      }
-      
-      return { status: 'inactive' };
-    }
-    
-    return { status: 'inactive' };
-  } catch (error) {
-    console.error('Error getting subscription status:', error);
-    throw error;
-  }
-};
 
-// Check if appointment has been paid
-export const getAppointmentPaymentStatus = async (appointmentId) => {
-  try {
-    const appointmentRef = doc(db, 'appointments', appointmentId);
-    const appointmentDoc = await getDoc(appointmentRef);
-    
-    if (appointmentDoc.exists()) {
-      const data = appointmentDoc.data();
+        throw new Error(errorMessage);
+      }
+
+      const clientSecret =
+        data?.paymentIntentClientSecret ||
+        data?.clientSecret ||
+        data?.paymentIntent ||
+        null;
+      const customer = data?.customerId || data?.customer || null;
+      const ephemeralKey = data?.ephemeralKeySecret || data?.ephemeralKey || null;
+      const paymentIntentId =
+        data?.paymentIntentId ||
+        data?.id ||
+        data?.paymentIntentID ||
+        null;
+
+      if (!clientSecret) {
+        throw new Error("Backend response missing PaymentIntent client secret.");
+      }
+
       return {
-        isPaid: data.paymentStatus === 'paid',
-        amount: data.paidAmount || 0,
-        paidAt: data.paidAt || null
+        clientSecret,
+        customer,
+        ephemeralKey,
+        paymentIntentId,
       };
     }
-    
-    return { isPaid: false, amount: 0, paidAt: null };
-  } catch (error) {
-    console.error('Error checking payment status:', error);
-    return { isPaid: false, amount: 0, paidAt: null };
   }
+
+  if (sawTipValidationError) {
+    throw new Error(
+      "Tip amount was rejected by the backend. Verify tip endpoint expects dollars vs cents and tip field names."
+    );
+  }
+
+  throw new Error(
+    `${lastError}. Tip payments require a tip-specific backend endpoint (/api/create-tip-payment-intent).`
+  );
 };
 
-// Export useStripe hook for components to use
+/* =========================================================
+   CARD SETUP (SAVE DEFAULT PAYMENT METHOD)
+========================================================= */
+
+export const presentSetupIntentSheet = async (
+  stripeHook,
+  { customerId, customerName, customerEmail } = {}
+) => {
+  const { initPaymentSheet, presentPaymentSheet } = stripeHook || {};
+  if (!initPaymentSheet || !presentPaymentSheet) {
+    throw new Error("Stripe is not ready");
+  }
+
+  const BACKEND_URL = getBackendUrl();
+  if (!BACKEND_URL) throw new Error("Backend not configured");
+
+  const headers = await getAuthHeaders();
+  const url = `${BACKEND_URL}/api/create-customer-setup-intent${
+    VERCEL_BYPASS ? `?x-vercel-protection-bypass=${VERCEL_BYPASS}` : ""
+  }`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      customerId,
+      customerName,
+      customerEmail,
+    }),
+  });
+
+  const { data, raw } = await parseResponsePayload(response);
+  if (!response.ok) {
+    return {
+      success: false,
+      error: {
+        message: resolveBackendErrorMessage(
+          data,
+          raw,
+          "Failed to create setup intent"
+        ),
+        code: data?.code || "setup_intent_create_failed",
+      },
+    };
+  }
+
+  const setupIntentClientSecret =
+    data?.setupIntentClientSecret || data?.clientSecret || data?.setupIntent;
+  const sheetCustomerId = data?.customerId || data?.customer || null;
+  const customerEphemeralKeySecret =
+    data?.ephemeralKeySecret || data?.ephemeralKey || null;
+
+  if (!setupIntentClientSecret) {
+    return {
+      success: false,
+      error: { message: "Backend response missing SetupIntent client secret." },
+    };
+  }
+
+  const paymentSheetConfig = {
+    merchantDisplayName: "ScheduleSync AI",
+    setupIntentClientSecret,
+    allowsDelayedPaymentMethods: false,
+    returnURL: "barberclean://payment-return",
+  };
+
+  if (sheetCustomerId && customerEphemeralKeySecret) {
+    paymentSheetConfig.customerId = sheetCustomerId;
+    paymentSheetConfig.customerEphemeralKeySecret = customerEphemeralKeySecret;
+  }
+
+  const { error: initError } = await initPaymentSheet(paymentSheetConfig);
+  if (initError) return { success: false, error: initError };
+
+  const { error: presentError } = await presentPaymentSheet();
+  if (presentError) {
+    if (presentError.code === "Canceled") {
+      return { success: false, canceled: true };
+    }
+    return { success: false, error: presentError };
+  }
+
+  return { success: true };
+};
+
 export { useStripe };
 
 export default {
   initializeStripe,
-  createSubscriptionPaymentSheet,
-  createTipPaymentSheet,
   createAndPresentServicePaymentSheet,
-  getSubscriptionStatus,
-  getAppointmentPaymentStatus,
-  useStripe
+  createTipPaymentSheet,
+  presentSetupIntentSheet,
+  useStripe,
 };

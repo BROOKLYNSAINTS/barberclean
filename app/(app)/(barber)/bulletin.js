@@ -179,6 +179,16 @@ export default function BarberBulletinScreen() {
     try {
       setPosting(true);
       const user = auth.currentUser;
+      if (!user?.uid) {
+        Alert.alert('Auth Error', `No authenticated user. Platform: ${Platform.OS}`);
+        return;
+      }
+      console.log('📝 Creating bulletin post', {
+        platform: Platform.OS,
+        userId: user.uid,
+        title,
+        category,
+      });
       await createBulletinPost({
         title,
         content,
@@ -195,7 +205,12 @@ export default function BarberBulletinScreen() {
       Alert.alert('Success', 'Post created successfully!');
     } catch (err) {
       console.error(err);
-      Alert.alert('Error', 'Failed to post.');
+      const details = [
+        `Message: ${err?.message || 'n/a'}`,
+        `Code: ${err?.code || 'n/a'}`,
+        `Platform: ${Platform.OS}`,
+      ].join('\n');
+      Alert.alert('Post Error', details);
     } finally {
       setPosting(false);
     }
@@ -207,6 +222,11 @@ export default function BarberBulletinScreen() {
 
     try {
       const user = auth.currentUser;
+      if (!user?.uid) {
+        Alert.alert('Auth Error', `No authenticated user. Platform: ${Platform.OS}`);
+        return;
+      }
+      console.log('💬 Adding comment', { platform: Platform.OS, postId, userId: user.uid });
       const userProfile = await getUserProfile(user.uid);
       await addCommentToPost(postId, {
         text,
@@ -218,7 +238,12 @@ export default function BarberBulletinScreen() {
       fetchPosts();
     } catch (err) {
       console.error(err);
-      Alert.alert('Error', 'Failed to post comment.');
+      const details = [
+        `Message: ${err?.message || 'n/a'}`,
+        `Code: ${err?.code || 'n/a'}`,
+        `Platform: ${Platform.OS}`,
+      ].join('\n');
+      Alert.alert('Comment Error', details);
     }
   };
 

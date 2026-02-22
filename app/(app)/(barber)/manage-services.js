@@ -11,6 +11,7 @@ import {
   StyleSheet,
   Image,
   ScrollView, // Add this import
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { getBarberServices, addBarberService, updateBarberService, auth } from '@/services/firebase';
@@ -124,12 +125,28 @@ function Screen() {
     try {
       setSaving(true);
       const user = auth.currentUser;
+
+      if (!user?.uid) {
+        const msg = 'No authenticated user (uid missing).';
+        console.warn(msg, { platform: Platform.OS });
+        setFormError(msg);
+        Alert.alert('Auth Error', `${msg}\nPlatform: ${Platform.OS}`);
+        return;
+      }
+
       const serviceData = {
         name: serviceName,
         duration: parsedDuration,
         price: parsedPrice,
         image: serviceImage,
       };
+
+      console.log('💾 Saving service...', {
+        platform: Platform.OS,
+        userId: user.uid,
+        editingServiceId: editingService?.id || null,
+        serviceData,
+      });
 
       if (editingService && editingService.id) {
         await updateBarberService(user.uid, editingService.id, serviceData);
@@ -141,7 +158,13 @@ function Screen() {
       fetchServices();
     } catch (err) {
       console.error('Failed to save service', err);
-      Alert.alert('Error', 'Could not save service.');
+      const details = [
+        `Message: ${err?.message || 'n/a'}`,
+        `Code: ${err?.code || 'n/a'}`,
+        `Platform: ${Platform.OS}`,
+      ].join('\n');
+      setFormError(err?.message || 'Could not save service.');
+      Alert.alert('Save Error', details);
     } finally {
       setSaving(false);
     }

@@ -38,21 +38,22 @@ export default function IndexScreen() {
         
         console.log('📋 All appointments:', appointments);
         
-        // Filter out cancelled appointments and get the most recent one
+        // Filter out cancelled appointments
         const activeAppointments = appointments.filter(apt => apt.status !== 'cancelled');
         
         console.log('📋 Active appointments:', activeAppointments);
         
         if (activeAppointments.length > 0) {
-          // Sort by date and get the most recent
+          // Sort by createdAt timestamp (most recently created appointment)
+          // This ensures we get the actual last appointment that was booked
           activeAppointments.sort((a, b) => {
-            const dateA = new Date(`${a.date}T${a.time}`);
-            const dateB = new Date(`${b.date}T${b.time}`);
-            return dateB - dateA;
+            const timeA = a.createdAt?.seconds || 0;
+            const timeB = b.createdAt?.seconds || 0;
+            return timeB - timeA; // Most recent first
           });
           
           const lastAppointment = activeAppointments[0];
-          console.log('📋 Last appointment data:', lastAppointment);
+          console.log('📋 Last appointment data (by createdAt):', lastAppointment);
           
           // Check what data we actually have
           const hasRequiredData = lastAppointment.barberId && 
@@ -60,15 +61,33 @@ export default function IndexScreen() {
                                  lastAppointment.serviceName;
           
           if (hasRequiredData) {
+            const resolvedServicePrice = Number(
+              lastAppointment.servicePrice ?? lastAppointment.price ?? 0
+            );
+            const resolvedServiceDuration = Number(
+              lastAppointment.serviceDuration ?? lastAppointment.duration ?? 30
+            );
+
             setPreviousBarber({
               barberId: lastAppointment.barberId,
               barberName: lastAppointment.barberName,
               serviceName: lastAppointment.serviceName,
-              servicePrice: lastAppointment.servicePrice || 0,
-              serviceDuration: lastAppointment.serviceDuration || 30,
+              servicePrice: Number.isFinite(resolvedServicePrice)
+                ? resolvedServicePrice
+                : 0,
+              serviceDuration: Number.isFinite(resolvedServiceDuration)
+                ? resolvedServiceDuration
+                : 30,
               serviceId: lastAppointment.serviceId || 'default'
             });
-            console.log('✅ Previous barber data set successfully');
+            console.log('✅ Previous barber data set successfully:', {
+              barberId: lastAppointment.barberId,
+              barberName: lastAppointment.barberName,
+              serviceName: lastAppointment.serviceName,
+              price: resolvedServicePrice,
+              duration: resolvedServiceDuration,
+              serviceId: lastAppointment.serviceId
+            });
           } else {
             console.log('❌ Missing required appointment data:', {
               barberId: lastAppointment.barberId,
@@ -178,11 +197,16 @@ export default function IndexScreen() {
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={{ flex: 1 }}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
     >
       <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-        <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+        <ScrollView 
+          contentContainerStyle={styles.container} 
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+        >
           <Text style={styles.title}>Welcome to ScheduleSync</Text>
           <Text style={styles.subtitle}>Book your next appointment</Text>
           
@@ -258,7 +282,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     paddingHorizontal: 24,
     paddingVertical: 40,
-    justifyContent: 'center',
   },
   title: {
     fontSize: 28,

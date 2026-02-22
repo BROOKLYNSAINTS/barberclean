@@ -1,135 +1,211 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, Alert } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  ActivityIndicator,
+  Alert,
+} from 'react-native';
 import { Calendar } from 'react-native-calendars';
 import { Ionicons } from '@expo/vector-icons';
-import { getBarberAvailability, createAppointment, getUserProfile } from '@/services/firebase';
+import {
+  getBarberAvailability,
+  createAppointment,
+  getUserProfile,
+} from '@/services/firebase';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
-import DebugUser from '@/components/DebugUser';
+import { presentSetupIntentSheet } from '@/services/stripe';
+import { useStripe } from '@stripe/stripe-react-native';
+
+const toLocalDateString = (date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const parseRouteParam = (value) => {
+  if (!value) return null;
+  if (typeof value === 'object') return value;
+
+  if (typeof value !== 'string') return null;
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    try {
+      return JSON.parse(decodeURIComponent(value));
+    } catch {
+      return null;
+    }
+  }
+};
 
 export default function AppointmentBookingScreen() {
   const { currentUser } = useAuth();
   const router = useRouter();
+  const stripe = useStripe();
   const params = useLocalSearchParams();
-  const service = params.service ? JSON.parse(params.service) : null;
-  
-  // Debug logging for navigation data
-  console.log('🔍 AppointmentBooking - Received params:', params);
-  console.log('🔍 AppointmentBooking - Parsed service:', service);
 
+  const service = useMemo(() => parseRouteParam(params.service), [params.service]);
+  const barber = useMemo(() => parseRouteParam(params.barber), [params.barber]);
+
+  const [availabilityData, setAvailabilityData] = useState([]);
+  const [openDates, setOpenDates] = useState(new Set());
   const [selectedDate, setSelectedDate] = useState('');
   const [availableSlots, setAvailableSlots] = useState([]);
   const [selectedSlot, setSelectedSlot] = useState('');
+  const [smsOptIn, setSmsOptIn] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [loadingSlots, setLoadingSlots] = useState(false);
-  const [error, setError] = useState('');
 
-  // Utility function to safely format a date string as YYYY-MM-DD
-  function getTodayString() {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  }
+  const today = toLocalDateString(new Date());
+  const maxDate = (() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() + 3);
+    return toLocalDateString(d);
+  })();
 
-  function getMaxDateString(monthsToAdd = 3) {
-    const maxDate = new Date();
-    maxDate.setMonth(maxDate.getMonth() + monthsToAdd);
-    const year = maxDate.getFullYear();
-    const month = String(maxDate.getMonth() + 1).padStart(2, '0');
-    const day = String(maxDate.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  }
-
-  const today = getTodayString();
-  const maxDateStr = getMaxDateString();
-
-  const barber = useMemo(() => {
-    const result = params.barber ? JSON.parse(params.barber) : null;
-    console.log('🔍 AppointmentBooking - Parsed barber:', result);
-    return result;
-  }, [params.barber]);
-
+  /* ---------------------------------------------------- */
+  /* Load availability                                   */
+  /* ---------------------------------------------------- */
   useEffect(() => {
-    const fetchSlots = async () => {
-      if (!barber?.id || !selectedDate) {
-        setAvailableSlots([]);
-        return;
-      }
+    if (!barber?.id) return;
 
+    (async () => {
       try {
-        setLoadingSlots(true);
-        setError('');
-        console.log("🔄 Fetching slots for", barber.id, "on", selectedDate);
-        const availability = await getBarberAvailability(barber.id);
-
-        const slotsForDate = Array.isArray(availability)
-          ? availability
-              .filter((slot) => slot.date === selectedDate && !!slot.time)
-              .map((slot) => slot.time)
-          : [];
-
-        setAvailableSlots(slotsForDate);
-      } catch (err) {
-        console.error('Error fetching available slots:', err);
-        setAvailableSlots([]);
-        setError('Unable to load time slots');
-      } finally {
-        setLoadingSlots(false);
+        const data = await getBarberAvailability(barber.id);
+        setAvailabilityData(data);
+        setOpenDates(new Set(data.map((s) => s.date)));
+      } catch (error) {
+        console.error('Failed to load barber availability:', error);
+        setAvailabilityData([]);
+        setOpenDates(new Set());
+        Alert.alert(
+          'Availability Unavailable',
+          'We could not load this barber availability right now. Please try again shortly.'
+        );
       }
-    };
+    })();
+  }, [barber?.id]);
 
-    fetchSlots();
-  }, [barber?.id, selectedDate]);
-
-  const handleDateSelect = (date) => {
-    setSelectedDate(date.dateString);
-    setSelectedSlot('');
-  };
-
-  const handleTimeSelect = (time) => {
-    setSelectedSlot(time);
-  };
-
-  const handleBookAppointment = async () => {
-    if (!selectedDate || !selectedSlot) {
-      Alert.alert('Error', 'Please select both date and time for your appointment');
+  /* ---------------------------------------------------- */
+  /* Compute slots                                        */
+  /* ---------------------------------------------------- */
+  useEffect(() => {
+    if (!selectedDate) {
+      setAvailableSlots([]);
       return;
     }
 
-    if (!barber || !service) {
-      Alert.alert('Error', 'Barber or Service details are missing.');
+    const slots = availabilityData
+      .filter((s) => s.date === selectedDate)
+      .map((s) => s.time);
+
+    setAvailableSlots(slots);
+  }, [selectedDate, availabilityData]);
+
+  /* ---------------------------------------------------- */
+  /* Calendar markings                                    */
+  /* ---------------------------------------------------- */
+  const markedDates = useMemo(() => {
+    const marks = {};
+    let current = new Date(today);
+    const end = new Date(maxDate);
+
+    while (current <= end) {
+      const dateStr = toLocalDateString(current);
+      if (!openDates.has(dateStr)) {
+        marks[dateStr] = {
+          disabled: true,
+          disableTouchEvent: true,
+        };
+      }
+      current.setDate(current.getDate() + 1);
+    }
+
+    if (selectedDate) {
+      marks[selectedDate] = {
+        selected: true,
+        selectedColor: '#2196F3',
+      };
+    }
+
+    return marks;
+  }, [openDates, selectedDate]);
+
+  /* ---------------------------------------------------- */
+  /* BOOK APPOINTMENT                                    */
+  /* ---------------------------------------------------- */
+  const handleBookAppointment = async () => {
+    if (!currentUser || !barber || !service) {
+      Alert.alert('Error', 'Missing booking data');
+      return;
+    }
+
+    if (!selectedDate || !selectedSlot) {
+      Alert.alert('Error', 'Select date and time');
+      return;
+    }
+
+    if (!smsOptIn) {
+      Alert.alert(
+        'SMS Consent Required',
+        'Please agree to receive SMS appointment reminders and updates to continue booking.'
+      );
       return;
     }
 
     try {
       setLoading(true);
-      setError('');
-      
-      if (!currentUser) {
-        Alert.alert('Error', 'You must be logged in to book an appointment.');
-        setLoading(false);
-        router.replace('/(auth)/login');
-        return;
-      }
 
       const profile = await getUserProfile(currentUser.uid);
       const customerName = profile?.name || 'Customer';
+      const customerEmail = profile?.email || currentUser.email || undefined;
+
+      // 🔥 OPEN STRIPE SETUP SHEET
+      const setupResult = await presentSetupIntentSheet(stripe, {
+        customerId: currentUser.uid,
+        customerName,
+        customerEmail,
+      });
+
+      if (setupResult?.canceled) {
+        Alert.alert(
+          'Card Setup Canceled',
+          'Please add a card to continue booking.'
+        );
+        return;
+      }
+
+      if (!setupResult?.success) {
+        const setupErrorMessage =
+          setupResult?.error?.message || 'Unable to add card. Please try again.';
+
+        console.error('SetupIntent failed:', setupResult?.error || setupResult);
+        Alert.alert(
+          'Payment Setup Failed',
+          setupErrorMessage
+        );
+        return;
+      }
 
       const appointmentData = {
         customerId: currentUser.uid,
+        customerName,
         barberId: barber.id,
+        barberName: barber.name,
         serviceId: service.id,
         serviceName: service.name,
-        servicePrice: service.price,
+        servicePrice: service.price || 0,
+        serviceDuration: service.duration || 30,
         date: selectedDate,
         time: selectedSlot,
-        barberName: barber.name,
-        customerName,
+        smsOptIn,
+        smsOptInAt: smsOptIn ? new Date().toISOString() : null,
       };
-
-      console.log('📅 Booking appointment with data:', appointmentData);
 
       const appointment = await createAppointment(appointmentData);
 
@@ -141,139 +217,116 @@ export default function AppointmentBookingScreen() {
           service: JSON.stringify(service),
         },
       });
-    } catch (error) {
-      console.error('Error booking appointment:', error);
-      setError('Failed to book appointment. Please try again.');
+    } catch (err) {
+      console.error('Booking error:', err);
+      Alert.alert('Error', err.message || 'Failed to book appointment');
     } finally {
       setLoading(false);
     }
   };
 
-  const renderTimeSlots = () => {
-    if (loadingSlots) {
-      return (
-        <View style={styles.centered}>
-          <ActivityIndicator size="small" color="#2196F3" />
-          <Text style={styles.loadingText}>Loading available times...</Text>
-        </View>
-      );
-    }
-
-    if (error && availableSlots.length === 0) {
-      return (
-        <View style={styles.centered}>
-          <Text style={styles.errorText}>{error}</Text>
-        </View>
-      );
-    }
-
-    if (availableSlots.length === 0 && selectedDate) {
-      return (
-        <View style={styles.centered}>
-          <Text style={styles.noSlotsText}>No available slots for this date</Text>
-        </View>
-      );
-    }
-
-    return (
-      <View style={styles.timeSlotsContainer}>
-        {availableSlots.map((time) => (
-          <TouchableOpacity
-            key={time}
-            style={[
-              styles.timeSlot,
-              selectedSlot === time && styles.selectedTimeSlot,
-            ]}
-            onPress={() => handleTimeSelect(time)}
-          >
-            <Text
-              style={[
-                styles.timeSlotText,
-                selectedSlot === time && styles.selectedTimeSlotText,
-              ]}
-            >
-              {time}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-    );
-  };
-
+  /* ---------------------------------------------------- */
+  /* UI                                                   */
+  /* ---------------------------------------------------- */
   if (!barber || !service) {
-    console.log('❌ AppointmentBooking - Missing data:', { barber, service });
     return (
       <View style={styles.centered}>
-        <Ionicons name="alert-circle-outline" size={64} color="#f44336" />
-        <Text style={styles.errorText}>
-          {error || `Missing data: ${!barber ? 'barber' : ''} ${!service ? 'service' : ''}`}
-        </Text>
-        <TouchableOpacity onPress={() => router.back()} style={styles.retryButton}>
-          <Text style={styles.retryButtonText}>Go Back</Text>
-        </TouchableOpacity>
+        <Ionicons name="alert-circle-outline" size={48} color="#f44336" />
+        <Text style={styles.error}>Missing barber or service</Text>
       </View>
     );
   }
 
   return (
     <ScrollView style={styles.container}>
-      <View style={styles.serviceInfoCard}>
-        <Text style={styles.serviceInfoTitle}>Booking Details</Text>
-        <View style={styles.serviceInfoRow}>
-          <Text style={styles.serviceInfoLabel}>Barber:</Text>
-          <Text style={styles.serviceInfoValue}>{barber.name}</Text>
-        </View>
-        <View style={styles.serviceInfoRow}>
-          <Text style={styles.serviceInfoLabel}>Service:</Text>
-          <Text style={styles.serviceInfoValue}>{service.name}</Text>
-        </View>
-        <View style={styles.serviceInfoRow}>
-          <Text style={styles.serviceInfoLabel}>Duration:</Text>
-          <Text style={styles.serviceInfoValue}>{service.duration} min</Text>
-        </View>
-        <View style={styles.serviceInfoRow}>
-          <Text style={styles.serviceInfoLabel}>Price:</Text>
-          <Text style={styles.serviceInfoValue}>${service.price.toFixed(2)}</Text>
-        </View>
+      <View style={styles.card}>
+        <Text style={styles.title}>Booking Details</Text>
+        <Text>Barber: {barber.name}</Text>
+        <Text>Service: {service.name}</Text>
+        <Text>Duration: {service.duration} min</Text>
+        <Text>Price: ${Number(service.price || 0).toFixed(2)}</Text>
       </View>
 
-      <View style={styles.sectionContainer}>
+      <View style={styles.section}>
         <Text style={styles.sectionTitle}>Select Date</Text>
         <Calendar
           minDate={today}
-          maxDate={maxDateStr}
-          onDayPress={handleDateSelect}
-          markedDates={{
-            [selectedDate]: { selected: true, selectedColor: '#2196F3' },
-          }}
-          theme={{
-            todayTextColor: '#2196F3',
-            arrowColor: '#2196F3',
-            dotColor: '#2196F3',
-            selectedDotColor: '#ffffff',
+          maxDate={maxDate}
+          markedDates={markedDates}
+          onDayPress={(d) => {
+            if (!openDates.has(d.dateString)) {
+              Alert.alert('Shop Closed', 'This barber is not available on this date.');
+              return;
+            }
+            setSelectedDate(d.dateString);
+            setSelectedSlot('');
           }}
         />
       </View>
 
       {selectedDate && (
-        <View style={styles.sectionContainer}>
+        <View style={styles.section}>
           <Text style={styles.sectionTitle}>Select Time</Text>
-          {renderTimeSlots()}
+
+          {availableSlots.length === 0 ? (
+            <Text style={{ color: '#f44336' }}>
+              Shop is closed or no available slots.
+            </Text>
+          ) : (
+            <View style={styles.slotWrap}>
+              {availableSlots.map((t) => (
+                <TouchableOpacity
+                  key={t}
+                  style={[
+                    styles.slot,
+                    selectedSlot === t && styles.slotSelected,
+                  ]}
+                  onPress={() => setSelectedSlot(t)}
+                >
+                  <Text
+                    style={[
+                      styles.slotText,
+                      selectedSlot === t && styles.slotTextSelected,
+                    ]}
+                  >
+                    {t}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
         </View>
       )}
 
+      <View style={styles.section}>
+        <TouchableOpacity
+          style={styles.smsOptInRow}
+          onPress={() => setSmsOptIn((prev) => !prev)}
+          activeOpacity={0.8}
+        >
+          <Ionicons
+            name={smsOptIn ? 'checkbox' : 'square-outline'}
+            size={24}
+            color={smsOptIn ? '#2196F3' : '#666'}
+            style={styles.smsCheckbox}
+          />
+          <Text style={styles.smsOptInText}>
+            I agree to receive SMS appointment reminders and updates from
+            ScheduleSync AI LLC. Message frequency varies. Message & data rates
+            may apply. Reply STOP to unsubscribe. Reply HELP for help.
+          </Text>
+        </TouchableOpacity>
+      </View>
+
       <TouchableOpacity
-        style={[
-          styles.bookButton,
-          (!selectedDate || !selectedSlot || loading) && styles.disabledButton,
-        ]}
+        style={[styles.bookButton, (!smsOptIn || loading) && styles.disabled]}
         onPress={handleBookAppointment}
-        disabled={!selectedDate || !selectedSlot || loading}
+        disabled={!smsOptIn || loading}
       >
         {loading ? (
-          <ActivityIndicator size="small" color="#fff" />
+          <ActivityIndicator color="#fff" />
         ) : (
-          <Text style={styles.bookButtonText}>Book Appointment</Text>
+          <Text style={styles.bookText}>Book Appointment</Text>
         )}
       </TouchableOpacity>
     </ScrollView>
@@ -282,25 +335,27 @@ export default function AppointmentBookingScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
-  serviceInfoCard: { margin: 16, padding: 16, backgroundColor: '#f5f5f5', borderRadius: 8, borderWidth: 1, borderColor: '#ddd' },
-  serviceInfoTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 12 },
-  serviceInfoRow: { flexDirection: 'row', marginBottom: 8 },
-  serviceInfoLabel: { fontWeight: '500', width: 80 },
-  serviceInfoValue: { flex: 1 },
-  sectionContainer: { margin: 16 },
-  sectionTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 12 },
-  centered: { alignItems: 'center', justifyContent: 'center', padding: 20 },
-  loadingText: { marginTop: 8, color: '#666' },
-  errorText: { color: '#f44336', textAlign: 'center', marginTop: 10 },
-  retryButton: { marginTop: 16, backgroundColor: '#2196F3', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 4 },
-  retryButtonText: { color: '#fff', fontWeight: 'bold' },
-  noSlotsText: { color: '#666', textAlign: 'center' },
-  timeSlotsContainer: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 },
-  timeSlot: { backgroundColor: '#f5f5f5', borderRadius: 4, padding: 12, margin: 4, borderWidth: 1, borderColor: '#ddd' },
-  selectedTimeSlot: { backgroundColor: '#2196F3', borderColor: '#2196F3' },
-  timeSlotText: { color: '#333' },
-  selectedTimeSlotText: { color: '#fff', fontWeight: 'bold' },
-  bookButton: { backgroundColor: '#2196F3', padding: 16, margin: 16, borderRadius: 8, alignItems: 'center' },
-  disabledButton: { backgroundColor: '#cccccc' },
-  bookButtonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  error: { color: '#f44336', marginTop: 8 },
+  card: { margin: 16, padding: 16, backgroundColor: '#f5f5f5', borderRadius: 8 },
+  title: { fontSize: 18, fontWeight: 'bold', marginBottom: 6 },
+  section: { margin: 16 },
+  sectionTitle: { fontSize: 16, fontWeight: '600', marginBottom: 8 },
+  smsOptInRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  smsCheckbox: { marginTop: 1, marginRight: 8 },
+  smsOptInText: { flex: 1, color: '#444', lineHeight: 20, fontSize: 13 },
+  slotWrap: { flexDirection: 'row', flexWrap: 'wrap' },
+  slot: { padding: 10, margin: 4, borderRadius: 6, backgroundColor: '#eee' },
+  slotSelected: { backgroundColor: '#2196F3' },
+  slotText: { color: '#333' },
+  slotTextSelected: { color: '#fff', fontWeight: 'bold' },
+  bookButton: {
+    margin: 16,
+    padding: 16,
+    backgroundColor: '#2196F3',
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  bookText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+  disabled: { opacity: 0.6 },
 });

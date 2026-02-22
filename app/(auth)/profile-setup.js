@@ -1,182 +1,141 @@
+// app/(auth)/profile-setup.js
+
 import React, { useState } from 'react';
-import { View, Text, TextInput, StyleSheet, TouchableOpacity, ScrollView, Switch, Alert, Linking } from 'react-native';
-import { createUserProfile } from '@/services/firebase';
+import {
+  View,
+  Text,
+  TextInput,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  Switch,
+  Alert,
+  Linking,
+} from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { createSubscriptionPaymentSheet, useStripe } from '@/services/stripe';
 import Constants from 'expo-constants';
 
-const ProfileSetupScreen = () => {
+import { db } from '@/services/firebase';
+import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { createSubscriptionPaymentSheet, useStripe } from '@/services/stripe';
+
+export default function ProfileSetupScreen() {
   const router = useRouter();
-  const { userId, email } = useLocalSearchParams();
   const stripe = useStripe();
-  
+  const { userId, email } = useLocalSearchParams();
+
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
   const [zipcode, setZipcode] = useState('');
   const [isBarber, setIsBarber] = useState(false);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  /* -----------------------------------------
+   * BARBER SUBSCRIPTION
+   * ----------------------------------------- */
   const handleBarberSubscription = async () => {
-    try {
-      setLoading(true);
-      console.log('🔔 Creating barber subscription...');
+    if (!stripe) return false;
 
-      // Ensure Stripe hook is initialized
-      if (!stripe) {
-        Alert.alert('Stripe error', 'Stripe is not initialized in this build.');
-        return false;
-      }
+    const PRICE_ID =
+      Constants.expoConfig?.extra?.stripeSubscriptionPriceId ||
+      process.env.EXPO_PUBLIC_STRIPE_SUBSCRIPTION_PRICE_ID;
 
-      const BARBER_SUBSCRIPTION_PRICE_ID =
-        Constants.expoConfig?.extra?.stripeSubscriptionPriceId ||
-        process.env.EXPO_PUBLIC_STRIPE_SUBSCRIPTION_PRICE_ID;
+    if (!PRICE_ID) return false;
 
-      if (!BARBER_SUBSCRIPTION_PRICE_ID) {
-        console.error('Missing Stripe price ID');
-        Alert.alert(
-          'Configuration Error',
-          'Stripe subscription price ID is not configured for this build.'
-        );
-        return false;
-      }
+    const result = await createSubscriptionPaymentSheet(
+      stripe,
+      userId,
+      PRICE_ID,
+      email
+    );
 
-      console.log('💳 Using Stripe Price ID:', BARBER_SUBSCRIPTION_PRICE_ID);
-      console.log('📧 User email:', email);
+    if (!result?.success) return false;
 
-      const subscriptionResult = await createSubscriptionPaymentSheet(
-        stripe,
-        userId,
-        BARBER_SUBSCRIPTION_PRICE_ID,
-        email
-      );
-      
-      if (subscriptionResult.success) {
-        console.log('✅ Subscription created successfully');
-        
-        // If Connect onboarding URL is available, open it
-        if (subscriptionResult.onboardingUrl) {
-          console.log('🔗 Opening Stripe Connect onboarding...');
-          Alert.alert(
-            'Setup Bank Account',
-            'To receive payments from customers, you need to complete your bank account setup with Stripe.',
-            [
-              {
-                text: 'Setup Now',
-                onPress: async () => {
-                  try {
-                    const supported = await Linking.canOpenURL(subscriptionResult.onboardingUrl);
-                    if (supported) {
-                      await Linking.openURL(subscriptionResult.onboardingUrl);
-                    } else {
-                      console.error('Cannot open URL:', subscriptionResult.onboardingUrl);
-                      Alert.alert('Error', 'Unable to open bank setup. Please contact support.');
-                    }
-                  } catch (err) {
-                    console.error('Error opening URL:', err);
-                  }
-                }
-              },
-              {
-                text: 'Setup Later',
-                style: 'cancel',
-                onPress: () => {
-                  Alert.alert('Success!', 'Your barber subscription is active. You can setup your bank account later in settings.');
-                }
-              }
-            ]
-          );
-        } else {
-          Alert.alert('Success!', 'Your barber subscription is now active. Welcome aboard!');
-        }
-        
-        return true;
-      } else if (subscriptionResult.canceled) {
-        Alert.alert('Setup Canceled', 'Subscription setup was canceled. You can set this up later in settings.');
-        return false;
-      } else {
-        throw new Error('Subscription creation failed');
-      }
-      
-    } catch (error) {
-      console.error('❌ Subscription error:', error);
-      console.error('❌ Error message:', error.message);
-      console.error('❌ Error stack:', error.stack);
-      Alert.alert('Subscription Error', `Failed to create subscription: ${error.message}`);
-      return false;
-    } finally {
-      setLoading(false);
+    if (result.onboardingUrl) {
+      await Linking.openURL(result.onboardingUrl);
     }
+
+    return true;
   };
 
+  /* -----------------------------------------
+   * SAVE PROFILE (SAFE)
+   * ----------------------------------------- */
   const handleSaveProfile = async () => {
     try {
       if (!name || !phone || !address || !zipcode) {
-        setError('Please fill in all required fields');
+        setError('All fields are required.');
         return;
       }
 
       setLoading(true);
       setError('');
 
-      // For barbers, handle subscription first
       if (isBarber) {
-        const subscriptionSuccess = await handleBarberSubscription();
-        if (!subscriptionSuccess) {
+        const ok = await handleBarberSubscription();
+        if (!ok) {
           setLoading(false);
           return;
         }
       }
 
-      const userData = {
+      const userRef = doc(db, 'users', userId);
+
+      const payload = {
         name,
         phone,
         address,
         zipcode,
         role: isBarber ? 'barber' : 'customer',
-        createdAt: new Date().toISOString(),
+        userType: isBarber ? 'barber' : 'customer',
+        updatedAt: serverTimestamp(),
       };
 
       if (isBarber) {
-        userData.subscription = {
-          status: 'active',
-          plan: 'barber_monthly',
-          startDate: new Date().toISOString(),
-          amount: 30,
-          currency: 'usd',
+        payload.noShowSettings = {
+          enabled: true,
+          feeType: 'flat',
+          feeAmount: 25,
+          cancellationWindowHours: 24,
+          updatedAt: new Date().toISOString(),
+        };
+
+        payload.metrics = {
+          recoveredRevenue: 0,
         };
       }
 
-      await createUserProfile(userId, userData);
-      
-      if (isBarber) {
-        router.replace('/(app)/(barber)/dashboard');
-      } else {
-        router.replace('/(app)/(customer)/');
-      }
-    } catch (error) {
-      console.error('❌ Profile save error:', error);
-      console.error('❌ Error message:', error.message);
-      console.error('❌ Error stack:', error.stack);
-      Alert.alert('Profile Error', `Failed to save profile: ${error.message}`);
+      // ✅ UPDATE ONLY — NEVER overwrite Stripe fields
+      await updateDoc(userRef, payload);
+
+      router.replace(
+        isBarber ? '/(app)/(barber)/dashboard' : '/(app)/(customer)/'
+      );
+    } catch (err) {
+      Alert.alert('Profile Error', err.message);
     } finally {
       setLoading(false);
     }
   };
 
+  /* -----------------------------------------
+   * UI
+   * ----------------------------------------- */
   return (
     <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContainer}>
+      <ScrollView contentContainerStyle={styles.scroll}>
         <Text style={styles.title}>Profile Setup</Text>
-        
+
         <TextInput
           style={styles.input}
-          placeholder="Full Name"
+          placeholder="Business / Full Name"
           value={name}
           onChangeText={setName}
         />
-        
+
         <TextInput
           style={styles.input}
           placeholder="Phone Number"
@@ -184,14 +143,14 @@ const ProfileSetupScreen = () => {
           onChangeText={setPhone}
           keyboardType="phone-pad"
         />
-        
+
         <TextInput
           style={styles.input}
           placeholder="Address"
           value={address}
           onChangeText={setAddress}
         />
-        
+
         <TextInput
           style={styles.input}
           placeholder="Zip Code"
@@ -199,35 +158,14 @@ const ProfileSetupScreen = () => {
           onChangeText={setZipcode}
           keyboardType="numeric"
         />
-        
-        <View style={styles.switchContainer}>
-          <Text style={styles.switchLabel}>Are you a barber?</Text>
-          <Switch
-            value={isBarber}
-            onValueChange={setIsBarber}
-            thumbColor={isBarber ? '#fff' : '#f4f3f4'}
-            trackColor={{ false: '#767577', true: '#81b0ff' }}
-          />
+
+        <View style={styles.switchRow}>
+          <Text style={styles.switchLabel}>I am a barber</Text>
+          <Switch value={isBarber} onValueChange={setIsBarber} />
         </View>
 
-        {isBarber && (
-          <View style={styles.barberSection}>
-            <Text style={styles.sectionTitle}>Barber Subscription</Text>
-            <Text style={styles.sectionSubtitle}>
-              $30/month – Secure payment via Stripe
-            </Text>
-            <Text style={styles.featuresText}>
-              ✅ Accept appointments{'\n'}
-              ✅ Manage your schedule{'\n'}
-              ✅ Receive payments{'\n'}
-              ✅ Chat with barbers{'\n'}
-              ✅ Message Board
-            </Text>
-          </View>
-        )}
-        
         {error ? <Text style={styles.error}>{error}</Text> : null}
-        
+
         <TouchableOpacity
           style={styles.button}
           onPress={handleSaveProfile}
@@ -235,88 +173,40 @@ const ProfileSetupScreen = () => {
         >
           <Text style={styles.buttonText}>
             {loading
-              ? (isBarber ? 'Setting up subscription...' : 'Saving...')
-              : (isBarber ? 'Subscribe & Continue' : 'Save Profile')}
+              ? 'Processing...'
+              : isBarber
+              ? 'Subscribe & Continue'
+              : 'Save Profile'}
           </Text>
         </TouchableOpacity>
       </ScrollView>
     </View>
   );
-};
+}
 
+/* -----------------------------------------
+ * STYLES
+ * ----------------------------------------- */
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 16,
-    backgroundColor: '#fff',
-  },
-  scrollContainer: {
-    flexGrow: 1,
-    justifyContent: 'center',
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 24,
-    textAlign: 'center',
-  },
+  container: { flex: 1, backgroundColor: '#fff', padding: 16 },
+  scroll: { flexGrow: 1, justifyContent: 'center' },
+  title: { fontSize: 24, fontWeight: '700', textAlign: 'center', marginBottom: 24 },
   input: {
     height: 50,
-    borderColor: '#ccc',
     borderWidth: 1,
+    borderColor: '#ccc',
     borderRadius: 8,
     paddingHorizontal: 16,
-    marginBottom: 16,
+    marginBottom: 14,
   },
-  switchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  switchLabel: {
-    flex: 1,
-    fontSize: 16,
-  },
+  switchRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 16 },
+  switchLabel: { flex: 1, fontSize: 16 },
   button: {
     backgroundColor: '#007bff',
-    borderRadius: 8,
     paddingVertical: 16,
-    paddingHorizontal: 32,
+    borderRadius: 8,
     alignItems: 'center',
   },
-  buttonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  error: {
-    color: 'red',
-    marginBottom: 16,
-    textAlign: 'center',
-  },
-  barberSection: {
-    marginTop: 10,
-    marginBottom: 20,
-    padding: 15,
-    backgroundColor: '#f5f5f5',
-    borderRadius: 8,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 5,
-  },
-  sectionSubtitle: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 10,
-  },
-  featuresText: {
-    fontSize: 14,
-    color: '#333',
-    lineHeight: 20,
-  },
+  buttonText: { color: '#fff', fontSize: 18, fontWeight: '700' },
+  error: { color: 'red', textAlign: 'center', marginBottom: 12 },
 });
-
-export default ProfileSetupScreen;
-

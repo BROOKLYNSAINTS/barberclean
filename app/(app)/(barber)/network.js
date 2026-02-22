@@ -43,8 +43,8 @@ export default function BarberNetworkScreen() {
       }
 
       const results = await getBarbersByZipcode(zip);
-
       const cleaned = (results || []).filter((b) => b?.id && b.id !== me);
+
       setBarbers(cleaned);
     } catch (e) {
       console.error('Network fetch error:', e);
@@ -131,6 +131,19 @@ export default function BarberNetworkScreen() {
     }
   };
 
+  const handleViewProfile = (barber) => {
+    const barberId = barber?.id;
+    if (!barberId) {
+      Alert.alert('Error', 'Missing barber id');
+      return;
+    }
+
+    router.push({
+      pathname: '/(app)/(barber)/view-barber-profile',
+      params: { barberId },
+    });
+  };
+
   if (loading) {
     return (
       <SafeAreaView style={styles.center}>
@@ -164,7 +177,11 @@ export default function BarberNetworkScreen() {
                 returnKeyType="search"
                 onSubmitEditing={handleSearch}
               />
-              <Button title={searching ? '...' : 'Search'} onPress={handleSearch} disabled={searching} />
+              <Button
+                title={searching ? '...' : 'Search'}
+                onPress={handleSearch}
+                disabled={searching}
+              />
             </View>
 
             {!!error && (
@@ -180,13 +197,29 @@ export default function BarberNetworkScreen() {
               renderItem={({ item }) => (
                 <Card style={styles.card}>
                   <Text style={styles.name}>{item.name || 'Barber'}</Text>
-                  <TouchableOpacity style={styles.btn} onPress={() => handleMessage(item)}>
-                    <Ionicons name="chatbubble-outline" size={18} color="#fff" />
-                    <Text style={styles.btnText}>Message</Text>
-                  </TouchableOpacity>
+
+                  <View style={styles.actionsRow}>
+                    <TouchableOpacity
+                      style={styles.messageBtn}
+                      onPress={() => handleMessage(item)}
+                    >
+                      <Ionicons name="chatbubble-outline" size={18} color="#fff" />
+                      <Text style={styles.messageBtnText}>Message</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.profileBtn}
+                      onPress={() => handleViewProfile(item)}
+                    >
+                      <Ionicons name="person-outline" size={18} color="#007BFF" />
+                      <Text style={styles.profileBtnText}>Profile</Text>
+                    </TouchableOpacity>
+                  </View>
                 </Card>
               )}
-              ListEmptyComponent={<Text style={{ textAlign: 'center' }}>No barbers found</Text>}
+              ListEmptyComponent={
+                <Text style={{ textAlign: 'center' }}>No barbers found</Text>
+              }
             />
           </View>
         </TouchableWithoutFeedback>
@@ -204,15 +237,25 @@ const styles = StyleSheet.create({
   subtitle: { color: '#666' },
 
   searchRow: { flexDirection: 'row', padding: 16, backgroundColor: '#fff', gap: 10 },
-  input: { flex: 1, borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 10, backgroundColor: '#fff' },
+  input: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 8,
+    padding: 10,
+    backgroundColor: '#fff',
+  },
 
   errorBox: { marginHorizontal: 16, marginTop: 10, padding: 12, backgroundColor: '#ffe5e5', borderRadius: 10 },
   errorText: { color: '#b00020', fontWeight: '600', textAlign: 'center' },
 
   card: { padding: 16, marginBottom: 12 },
-  name: { fontSize: 18, fontWeight: 'bold', marginBottom: 10 },
+  name: { fontSize: 18, fontWeight: 'bold', marginBottom: 12 },
 
-  btn: {
+  actionsRow: { flexDirection: 'row', gap: 10 },
+
+  messageBtn: {
+    flex: 1,
     flexDirection: 'row',
     backgroundColor: '#007BFF',
     padding: 10,
@@ -221,5 +264,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 6,
   },
-  btnText: { color: '#fff', fontWeight: 'bold' },
+  messageBtnText: { color: '#fff', fontWeight: 'bold' },
+
+  profileBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#007BFF',
+    padding: 10,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  profileBtnText: { color: '#007BFF', fontWeight: 'bold' },
 });

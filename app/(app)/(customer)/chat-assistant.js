@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useFocusEffect } from '@react-navigation/native'; // <-- add
+import { useRouter } from 'expo-router';
 import {
   SafeAreaView,
   View,
@@ -22,7 +23,8 @@ import {
   createAppointment,
   getLastAppointmentForUser,
   cancelAppointment,
-  getRecentAppointmentsForUser   // <-- added
+  getRecentAppointmentsForUser,
+  getCustomerAppointments
 } from '@/services/firebase';
 import {
   addAppointmentToCalendar,
@@ -110,6 +112,7 @@ async function bookAppointment(appointment){
 
 export default function ChatAssistantScreen() {
   const { currentUser } = useAuth();
+  const router = useRouter();
   const scrollRef = useRef(null);
   const hasShownMenu = useRef(false);
 
@@ -145,6 +148,9 @@ export default function ChatAssistantScreen() {
   const [recentAppointments, setRecentAppointments] = useState([]);
   const [cancelPick, setCancelPick] = useState(null);
   const [lastAppointment, setLastAppointment] = useState(null);
+  const [unpaidAppointments, setUnpaidAppointments] = useState([]);
+  const [payStage, setPayStage] = useState('idle');
+  const [selectedPayment, setSelectedPayment] = useState(null);
 
   const parseNumberChoice = (text) => {
     if (typeof text !== 'string') return null;
@@ -177,7 +183,10 @@ export default function ChatAssistantScreen() {
     setProcessing(false);
     setCancelStage('idle');
     setRecentAppointments([]);
-    setCancelPick(null); // <-- fixed missing parenthesis
+    setCancelPick(null);
+    setUnpaidAppointments([]);
+    setPayStage('idle');
+    setSelectedPayment(null);
   }, []);
 
   // REMOVE the entire duplicate block that started with:
@@ -218,6 +227,31 @@ export default function ChatAssistantScreen() {
       }
     }
 
+    if (selectedMode === 'pay') {
+      setPayStage('list');
+      try {
+        const allAppointments = await getCustomerAppointments(currentUser?.uid);
+        const unpaid = allAppointments.filter(apt => apt.paymentStatus === 'unpaid');
+        console.log('[PAY] unpaid appointments', unpaid);
+        setUnpaidAppointments(unpaid);
+        if (!unpaid.length) {
+          addBotMessage('You have no unpaid bills. Type "menu" to return.');
+          Speech.speak('You have no unpaid bills.');
+          return;
+        }
+        const lines = unpaid.map((a,i)=>`${i+1}. ${a.date} ${a.time} — ${a.serviceName || 'Service'} — $${(a.price || 0).toFixed(2)}`).join('\n');
+        const msg = `Unpaid appointments:\n${lines}\n\nReply with a number (1-${unpaid.length}) to pay.`;
+        addBotMessage(msg);
+        Speech.speak('Reply with a number to pay.');
+        return;
+      } catch (err) {
+        console.error('[PAY] error loading unpaid:', err);
+        addBotMessage('Could not load unpaid appointments. Type "menu" to return.');
+        Speech.speak('Could not load unpaid appointments.');
+        return;
+      }
+    }
+
     if (selectedMode === 'repeat') {
       try {
         const last = await getLastAppointmentForUser(currentUser?.uid);
@@ -243,8 +277,7 @@ export default function ChatAssistantScreen() {
 
     const modeMessages = {
       new: "Great! Let’s schedule your new haircut. Would you like to see the barbers I have in your area?",
-      repeat: "Booking your previous haircut. What time would you like to come in?",
-      pay: "Let’s complete your payment. Do you want to pay with card or wallet?"
+      repeat: "Booking your previous haircut. What time would you like to come in?"
     };
     const message = modeMessages[selectedMode] || '';
     if (message) { addBotMessage(message); Speech.speak(message); }
@@ -281,6 +314,37 @@ if (!mode) {
 
 
     try {
+      // Pay flow
+      if (mode === 'pay') {
+        if (payStage === 'list') {
+          const num = parseInt(userText, 10);
+          if (isNaN(num) || num < 1 || num > unpaidAppointments.length) {
+            addBotMessage(`Enter a number 1-${unpaidAppointments.length}, or type "menu".`);
+            Speech.speak('Enter a valid number.');
+            setLoading(false);
+            return;
+          }
+          const chosen = unpaidAppointments[num - 1];
+          setSelectedPayment(chosen);
+          addBotMessage('Opening payment screen...');
+          Speech.speak('Opening payment screen.');
+          
+          // Navigate to appointment details for payment
+          router.push({
+            pathname: '/(app)/(customer)/appointment-details',
+            params: { appointmentId: chosen.id }
+          });
+          
+          // Reset pay state
+          setMode(null);
+          setPayStage('idle');
+          setUnpaidAppointments([]);
+          setSelectedPayment(null);
+          setLoading(false);
+          return;
+        }
+      }
+
       // Cancel flow (last 3)
       if (mode === 'cancel') {
         if (cancelStage === 'list') {

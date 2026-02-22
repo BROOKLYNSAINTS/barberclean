@@ -7,7 +7,7 @@ export default {
   expo: {
     name: "barber-clean",
     slug: "barberclean",
-    version: "1.0.4",
+    version: "1.0.1",
     scheme: "barberclean",
     orientation: "portrait",
     icon: "./assets/icon512.png",
@@ -67,8 +67,16 @@ export default {
 
     android: {
       package: "com.ScheduleSync.barber.one",
-      versionCode: 28,
+      versionCode: 45,
       permissions: ["INTERNET", "READ_CALENDAR", "WRITE_CALENDAR"],
+    },
+    ios: {
+      bundleIdentifier: "com.ScheduleSync.barber",
+      buildNumber: "204",
+      supportsTablet: false,
+      infoPlist: {
+        ITSAppUsesNonExemptEncryption: false,
+      },
     },
     runtimeVersion: "1.0.5",
     updates: {
