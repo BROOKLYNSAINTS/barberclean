@@ -133,7 +133,10 @@ export default function AppointmentsScreen() {
               onPress={() =>
                 router.push({
                   pathname: '/(app)/(customer)/cancel-appointment',
-                  params: { appointment: JSON.stringify(item) },
+                  params: {
+                    appointmentId: item.id || item.appointmentId,
+                    appointment: JSON.stringify(item),
+                  },
                 })
               }
             >

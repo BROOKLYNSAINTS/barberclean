@@ -1,6 +1,6 @@
-import { Stack, useRouter } from 'expo-router';
+import { Stack } from 'expo-router';
 import { useEffect } from 'react';
-import { Linking } from 'react-native';
+import { Linking, LogBox } from 'react-native';
 import { StripeProvider } from '@stripe/stripe-react-native';
 import Constants from 'expo-constants';
 
@@ -11,9 +11,11 @@ const publishableKey =
   process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY ||
   Constants.expoConfig?.extra?.stripePublishableKey;
 
-export default function Layout() {
-  const router = useRouter();
+if (__DEV__) {
+  LogBox.ignoreAllLogs();
+}
 
+export default function Layout() {
   useEffect(() => {
     const handleDeepLink = async (event) => {
       const url = event.url;
@@ -30,7 +32,6 @@ export default function Layout() {
             });
           }
 
-          router.replace('/(app)/(barber)/dashboard');
         } catch (error) {
           console.error('❌ Error handling Connect return:', error);
         }
@@ -48,7 +49,7 @@ export default function Layout() {
     return () => {
       subscription.remove();
     };
-  }, [router]);
+  }, []);
 
   return (
     <StripeProvider

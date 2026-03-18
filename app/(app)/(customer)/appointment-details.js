@@ -12,8 +12,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 function formatDate(dateString) {
   if (!dateString) return 'N/A';
-  const d = new Date(dateString);
-  return d.toLocaleDateString(undefined, {
+  const [y, m, d] = String(dateString).split('-').map((v) => Number(v));
+  const parsed = new Date(y, (m || 1) - 1, d || 1);
+  if (Number.isNaN(parsed.getTime())) return 'N/A';
+  return parsed.toLocaleDateString(undefined, {
     weekday: 'long',
     year: 'numeric',
     month: 'long',
@@ -36,28 +38,40 @@ export default function AppointmentDetailsScreen() {
 
   if (!appointment) return null;
 
+  const resolvedAppointmentId = appointment?.id || appointment?.appointmentId || null;
+  const paymentStatus = String(appointment.paymentStatus || '').toLowerCase();
+  const isPaid = paymentStatus === 'paid';
+
   const handleCancel = () => {
     router.push({
       pathname: '/(app)/(customer)/cancel-appointment',
-      params: { appointmentId: appointment.id },
+      params: {
+        appointmentId: resolvedAppointmentId,
+        appointment: JSON.stringify(appointment),
+      },
     });
   };
 
   const handleTip = () => {
     router.push({
       pathname: '/(app)/(customer)/tip',
-      params: { appointmentId: appointment.id },
+      params: {
+        appointmentId: resolvedAppointmentId,
+        appointment: JSON.stringify(appointment),
+      },
     });
   };
 
   const handlePay = () => {
+    if (isPaid) return;
+
     const rawAmount = Number(appointment.servicePrice ?? 0);
     const amount = Number.isFinite(rawAmount) ? rawAmount : 0;
 
     router.push({
       pathname: '/(app)/(customer)/payment',
       params: {
-        appointmentId: appointment.id,
+        appointmentId: resolvedAppointmentId,
         barberId: appointment.barberId,
         amount: String(amount),
         serviceName: appointment.serviceName || 'Barber Service',
@@ -134,17 +148,23 @@ export default function AppointmentDetailsScreen() {
           <Text style={styles.reviewText}>Leave or Update Review</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.greenButton} onPress={handlePay}>
+        <TouchableOpacity
+          style={[styles.greenButton, isPaid && styles.greenButtonDisabled]}
+          onPress={handlePay}
+          disabled={isPaid}
+        >
           <Text style={styles.greenText}>
-            Pay ${Number(appointment.servicePrice || 0).toFixed(2)}
+            {isPaid
+              ? 'Paid'
+              : `Pay $${Number(appointment.servicePrice || 0).toFixed(2)}`}
           </Text>
         </TouchableOpacity>
 
         <Text style={styles.subText}>
-          Pay after service is completed
+          {isPaid ? 'This appointment has already been paid.' : 'Pay after service is completed'}
         </Text>
 
-        {appointment.status === 'confirmed' && (
+        {['confirmed', 'scheduled'].includes(appointment.status) && (
           <TouchableOpacity
             style={styles.cancelButton}
             onPress={handleCancel}
@@ -205,6 +225,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     marginBottom: 10,
+  },
+  greenButtonDisabled: {
+    backgroundColor: '#98A2B3',
   },
 
   greenText: { color: '#fff', fontWeight: '700', fontSize: 16 },

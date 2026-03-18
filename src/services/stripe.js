@@ -1,4 +1,9 @@
-import { initStripe, useStripe } from "@stripe/stripe-react-native";
+import {
+  initStripe,
+  useStripe,
+  StripeProvider,
+  CardField,
+} from "@stripe/stripe-react-native";
 import Constants from "expo-constants";
 import { auth } from "@/services/firebase";
 
@@ -52,11 +57,114 @@ async function getAuthHeaders() {
   try {
     const user = auth.currentUser;
     if (!user) return base;
-    const token = await user.getIdToken();
+    const token = await user.getIdToken(true);
     return { ...base, Authorization: `Bearer ${token}` };
   } catch {
     return base;
   }
+}
+
+// Stripe SetupIntent client_secret format: "seti_XXXX_secret_YYYY"
+function extractSetupIntentIdFromClientSecret(clientSecret) {
+  if (!clientSecret || typeof clientSecret !== "string") return null;
+  const idx = clientSecret.indexOf("_secret_");
+  if (idx <= 0) return null;
+  return clientSecret.slice(0, idx); // "seti_XXXX"
+}
+
+async function createConnectAccount({ userId, email }) {
+  const BACKEND_URL = getBackendUrl();
+  if (!BACKEND_URL) throw new Error("Backend not configured");
+
+  const headers = await getAuthHeaders();
+  const url = `${BACKEND_URL}/api/create-connect-account${
+    VERCEL_BYPASS ? `?x-vercel-protection-bypass=${VERCEL_BYPASS}` : ""
+  }`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      userId,
+      email,
+      businessType: "individual",
+    }),
+  });
+
+  const { data, raw } = await parseResponsePayload(response);
+  if (!response.ok) {
+    throw new Error(
+      resolveBackendErrorMessage(data, raw, "Failed to create Connect account")
+    );
+  }
+
+  return {
+    accountId: data?.accountId || data?.account || data?.stripeAccountId || null,
+    onboardingUrl:
+      data?.onboardingUrl || data?.accountLinkUrl || data?.url || null,
+  };
+}
+
+// ✅ Barber finalize (already exists)
+async function finalizeBarberSubscription({
+  userId,
+  customerEmail,
+  setupIntentId,
+  priceId,
+}) {
+  const BACKEND_URL = getBackendUrl();
+  if (!BACKEND_URL) throw new Error("Backend not configured");
+
+  const headers = await getAuthHeaders();
+  const url = `${BACKEND_URL}/api/finalize-barber-subscription${
+    VERCEL_BYPASS ? `?x-vercel-protection-bypass=${VERCEL_BYPASS}` : ""
+  }`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      userId,
+      customerEmail,
+      setupIntentId,
+      ...(priceId ? { priceId } : {}),
+    }),
+  });
+
+  const { data, raw } = await parseResponsePayload(response);
+  if (!response.ok) {
+    throw new Error(
+      resolveBackendErrorMessage(data, raw, "Failed to finalize subscription")
+    );
+  }
+
+  return data;
+}
+
+// ✅ NEW: finalize CUSTOMER setup (attach + set default + write Firestore)
+async function finalizeCustomerSetup({ setupIntentId }) {
+  const BACKEND_URL = getBackendUrl();
+  if (!BACKEND_URL) throw new Error("Backend not configured");
+
+  const headers = await getAuthHeaders();
+  const url = `${BACKEND_URL}/api/finalize-customer-setup${
+    VERCEL_BYPASS ? `?x-vercel-protection-bypass=${VERCEL_BYPASS}` : ""
+  }`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ setupIntentId }),
+  });
+
+  const { data, raw } = await parseResponsePayload(response);
+  if (!response.ok) {
+    throw new Error(
+      resolveBackendErrorMessage(data, raw, "Failed to finalize customer setup")
+    );
+  }
+
+  return data;
 }
 
 /* =========================================================
@@ -111,9 +219,7 @@ export const createAndPresentServicePaymentSheet = async (
     null;
 
   if (!paymentIntentClientSecret) {
-    throw new Error(
-      "Backend response missing PaymentIntent client secret."
-    );
+    throw new Error("Backend response missing PaymentIntent client secret.");
   }
 
   const customerId = data?.customer || data?.customerId || null;
@@ -125,6 +231,9 @@ export const createAndPresentServicePaymentSheet = async (
     paymentIntentClientSecret,
     allowsDelayedPaymentMethods: false,
     returnURL: "barberclean://payment-return",
+
+    // 🔒 DISABLE LINK (optional; dashboard setting is the real control)
+    linkDisplay: "never",
   };
 
   if (customerId && customerEphemeralKeySecret) {
@@ -133,7 +242,6 @@ export const createAndPresentServicePaymentSheet = async (
   }
 
   const { error: initError } = await initPaymentSheet(paymentSheetConfig);
-
   if (initError) throw new Error(initError.message);
 
   const { error: presentError } = await presentPaymentSheet();
@@ -160,6 +268,7 @@ export const createTipPaymentSheet = async (
 ) => {
   const BACKEND_URL = getBackendUrl();
   if (!BACKEND_URL) throw new Error("Backend not configured");
+  const headers = await getAuthHeaders();
 
   const parsedAmount = normalizeAmountValue(tipAmount);
   const parsedAmountCents = Math.round(parsedAmount * 100);
@@ -191,10 +300,7 @@ export const createTipPaymentSheet = async (
       tipAmountCents: parsedAmountCents,
     },
   ];
-  const endpointPaths = [
-    "/api/create-tip-payment-intent",
-    "/api/create-tip-intent",
-  ];
+  const endpointPaths = ["/api/create-tip-payment-intent", "/api/create-tip-intent"];
 
   let lastError = "Failed to create tip payment intent";
   let sawTipValidationError = false;
@@ -235,21 +341,13 @@ export const createTipPaymentSheet = async (
       const customer = data?.customerId || data?.customer || null;
       const ephemeralKey = data?.ephemeralKeySecret || data?.ephemeralKey || null;
       const paymentIntentId =
-        data?.paymentIntentId ||
-        data?.id ||
-        data?.paymentIntentID ||
-        null;
+        data?.paymentIntentId || data?.id || data?.paymentIntentID || null;
 
       if (!clientSecret) {
         throw new Error("Backend response missing PaymentIntent client secret.");
       }
 
-      return {
-        clientSecret,
-        customer,
-        ephemeralKey,
-        paymentIntentId,
-      };
+      return { clientSecret, customer, ephemeralKey, paymentIntentId };
     }
   }
 
@@ -311,7 +409,8 @@ export const presentSetupIntentSheet = async (
   }
 
   const setupIntentClientSecret =
-    data?.setupIntentClientSecret || data?.clientSecret || data?.setupIntent;
+    data?.setupIntentClientSecret || data?.clientSecret || data?.setupIntent || null;
+
   const sheetCustomerId = data?.customerId || data?.customer || null;
   const customerEphemeralKeySecret =
     data?.ephemeralKeySecret || data?.ephemeralKey || null;
@@ -328,6 +427,9 @@ export const presentSetupIntentSheet = async (
     setupIntentClientSecret,
     allowsDelayedPaymentMethods: false,
     returnURL: "barberclean://payment-return",
+
+    // 🔒 DISABLE LINK (optional; dashboard setting is the real control)
+    linkDisplay: "never",
   };
 
   if (sheetCustomerId && customerEphemeralKeySecret) {
@@ -346,15 +448,102 @@ export const presentSetupIntentSheet = async (
     return { success: false, error: presentError };
   }
 
-  return { success: true };
+  const setupIntentId =
+    data?.setupIntentId ||
+    data?.id ||
+    extractSetupIntentIdFromClientSecret(setupIntentClientSecret);
+
+  // ✅ NEW: finalize customer setup so Firestore gets defaultPaymentMethodId
+  try {
+    if (setupIntentId) {
+      await finalizeCustomerSetup({ setupIntentId });
+    }
+  } catch (e) {
+    return {
+      success: false,
+      error: { message: e?.message || "Failed to finalize customer setup" },
+    };
+  }
+
+  return {
+    success: true,
+    setupIntentClientSecret,
+    setupIntentId,
+    customerId: sheetCustomerId,
+  };
 };
 
-export { useStripe };
+/* =========================================================
+   BARBER SUBSCRIPTION (FIXED FLOW)
+========================================================= */
+
+export const createSubscriptionPaymentSheet = async (
+  stripeHook,
+  userId,
+  priceId,
+  customerEmail
+) => {
+  if (!userId) throw new Error("Missing userId");
+  if (!customerEmail) throw new Error("Missing customerEmail");
+
+  const setupResult = await presentSetupIntentSheet(stripeHook, {
+    customerEmail,
+  });
+
+  if (!setupResult?.success) return setupResult;
+
+  const setupIntentId =
+    setupResult?.setupIntentId ||
+    extractSetupIntentIdFromClientSecret(setupResult?.setupIntentClientSecret);
+
+  if (!setupIntentId) {
+    return {
+      success: false,
+      error: { message: "Could not determine SetupIntent ID after card setup." },
+    };
+  }
+
+  let finalizeResult;
+  try {
+    finalizeResult = await finalizeBarberSubscription({
+      userId,
+      customerEmail,
+      setupIntentId,
+      priceId,
+    });
+  } catch (e) {
+    return {
+      success: false,
+      error: { message: e?.message || "Failed to finalize subscription" },
+    };
+  }
+
+  const connect = await createConnectAccount({
+    userId,
+    email: customerEmail,
+  });
+
+  return {
+    success: true,
+    ...setupResult,
+    finalize: finalizeResult,
+    subscriptionId:
+      finalizeResult?.subscriptionId || finalizeResult?.subscriptionID || null,
+    subscriptionStatus: finalizeResult?.status || null,
+    connectAccountId: connect.accountId,
+    onboardingUrl: connect.onboardingUrl,
+  };
+};
+
+export { useStripe, StripeProvider, CardField };
 
 export default {
   initializeStripe,
   createAndPresentServicePaymentSheet,
   createTipPaymentSheet,
   presentSetupIntentSheet,
+  createSubscriptionPaymentSheet,
   useStripe,
+  StripeProvider,
+  CardField,
 };

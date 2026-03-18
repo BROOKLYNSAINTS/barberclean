@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Alert,
 import { Ionicons } from '@expo/vector-icons';
 import { useStripe, createTipPaymentSheet } from '@/services/stripe';
 import { auth, getUserProfile, getCustomerAppointments, db } from '@/services/firebase';
-import { collection, addDoc, serverTimestamp, doc, updateDoc } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 
 
@@ -23,6 +23,7 @@ const TipScreen = () => {
 
   const appointment = safeParse(params.appointment);
   const [resolvedAppointment, setResolvedAppointment] = useState(appointment || null);
+  const appointmentIdParam = params?.appointmentId ? String(params.appointmentId) : null;
   
   const [loading, setLoading] = useState(false);
   const [processing, setProcessing] = useState(false);
@@ -59,12 +60,26 @@ const TipScreen = () => {
   }, []);
 
   useEffect(() => {
-    // Fallback: if no appointment passed via params, pick the latest non-cancelled appointment for this customer
-    const loadFallbackAppointment = async () => {
+    // Priority:
+    // 1) appointment passed via params
+    // 2) explicit appointmentId param fetch
+    // 3) fallback to latest non-cancelled appointment only when no explicit selection was passed
+    const loadAppointment = async () => {
       try {
         if (resolvedAppointment) return;
         const user = auth.currentUser;
         if (!user?.uid) return;
+
+        if (appointmentIdParam) {
+          const snap = await getDoc(doc(db, 'appointments', appointmentIdParam));
+          if (snap.exists()) {
+            setResolvedAppointment({ id: snap.id, ...snap.data() });
+            return;
+          }
+          setError('The selected appointment was not found.');
+          return;
+        }
+
         const appts = await getCustomerAppointments(user.uid);
         if (Array.isArray(appts) && appts.length > 0) {
           const candidates = appts.filter((a) => a && a.status !== 'cancelled');
@@ -79,8 +94,8 @@ const TipScreen = () => {
         console.warn('Failed to load fallback appointment for tip:', e);
       }
     };
-    loadFallbackAppointment();
-  }, [resolvedAppointment]);
+    loadAppointment();
+  }, [resolvedAppointment, appointmentIdParam]);
 
   const fetchPaymentMethods = async () => {
     try {

@@ -137,7 +137,7 @@ export default function AppointmentBookingScreen() {
   }, [openDates, selectedDate]);
 
   /* ---------------------------------------------------- */
-  /* BOOK APPOINTMENT                                    */
+  /* BOOK APPOINTMENT (SMART CARD CHECK ADDED)           */
   /* ---------------------------------------------------- */
   const handleBookAppointment = async () => {
     if (!currentUser || !barber || !service) {
@@ -165,31 +165,30 @@ export default function AppointmentBookingScreen() {
       const customerName = profile?.name || 'Customer';
       const customerEmail = profile?.email || currentUser.email || undefined;
 
-      // 🔥 OPEN STRIPE SETUP SHEET
-      const setupResult = await presentSetupIntentSheet(stripe, {
-        customerId: currentUser.uid,
-        customerName,
-        customerEmail,
-      });
+      // 🔥 SMART CARD CHECK
+      if (!profile?.defaultPaymentMethodId) {
+        const setupResult = await presentSetupIntentSheet(stripe, {
+          customerId: currentUser.uid,
+          customerName,
+          customerEmail,
+        });
 
-      if (setupResult?.canceled) {
-        Alert.alert(
-          'Card Setup Canceled',
-          'Please add a card to continue booking.'
-        );
-        return;
-      }
+        if (setupResult?.canceled) {
+          Alert.alert(
+            'Card Setup Canceled',
+            'Please add a card to continue booking.'
+          );
+          return;
+        }
 
-      if (!setupResult?.success) {
-        const setupErrorMessage =
-          setupResult?.error?.message || 'Unable to add card. Please try again.';
+        if (!setupResult?.success) {
+          const setupErrorMessage =
+            setupResult?.error?.message || 'Unable to add card. Please try again.';
 
-        console.error('SetupIntent failed:', setupResult?.error || setupResult);
-        Alert.alert(
-          'Payment Setup Failed',
-          setupErrorMessage
-        );
-        return;
+          console.error('SetupIntent failed:', setupResult?.error || setupResult);
+          Alert.alert('Payment Setup Failed', setupErrorMessage);
+          return;
+        }
       }
 
       const appointmentData = {
@@ -203,6 +202,8 @@ export default function AppointmentBookingScreen() {
         serviceDuration: service.duration || 30,
         date: selectedDate,
         time: selectedSlot,
+        status: 'scheduled',
+        reminderSent: false,
         smsOptIn,
         smsOptInAt: smsOptIn ? new Date().toISOString() : null,
       };

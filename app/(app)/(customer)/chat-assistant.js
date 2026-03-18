@@ -29,7 +29,6 @@ import {
 import {
   addAppointmentToCalendar,
   requestPermissions,
-  scheduleAppointmentReminder,
   cancelAppointmentNotifications,
   removeAppointmentFromCalendar
 } from '@/services/notifications';
@@ -104,7 +103,6 @@ async function bookAppointment(appointment){
   // Non-fatal side effects
   try { await requestPermissions(); } catch(e){ console.log('[BOOK] perm warn', e); }
   try { await addAppointmentToCalendar(full); } catch(e){ console.log('[BOOK] calendar warn', e); }
-  try { await scheduleAppointmentReminder(full, appointment.customerId); } catch(e){ console.log('[BOOK] reminder warn', e); }
 
   return full;
 }
@@ -115,15 +113,6 @@ export default function ChatAssistantScreen() {
   const router = useRouter();
   const scrollRef = useRef(null);
   const hasShownMenu = useRef(false);
-
-  if (!currentUser) {
-    return (
-      <SafeAreaView style={{ flex:1, justifyContent:'center', alignItems:'center', backgroundColor:'#fff' }}>
-        <ActivityIndicator size="large" color="#007bff" />
-        <Text style={{ marginTop:12 }}>Loading user...</Text>
-      </SafeAreaView>
-    );
-  }
 
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -619,6 +608,15 @@ useEffect(() => {
     }, [resetAssistant])
   );
 
+  if (!currentUser) {
+    return (
+      <SafeAreaView style={{ flex:1, justifyContent:'center', alignItems:'center', backgroundColor:'#fff' }}>
+        <ActivityIndicator size="large" color="#007bff" />
+        <Text style={{ marginTop:12 }}>Loading user...</Text>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={{ flex:1, backgroundColor:'#fff' }}>
       <View style={styles.modeRow}>
@@ -741,5 +739,3 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
 });
-
-

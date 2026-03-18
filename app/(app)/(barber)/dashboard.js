@@ -45,38 +45,126 @@ function isUpcoming(appt) {
   return d >= new Date();
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export default function BarberDashboardScreen() {
+
   const router = useRouter();
 
   const [profile, setProfile] = useState(null);
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [setupPending, setSetupPending] = useState(false);
+  const [setupMessage, setSetupMessage] = useState('');
 
   const fetchData = useCallback(async () => {
     try {
+
       setLoading(true);
+      setSetupPending(false);
+      setSetupMessage('');
+
       const user = auth.currentUser;
       if (!user?.uid) return;
 
-      const userProfile = await getUserProfile(user.uid);
+      let userProfile = await getUserProfile(user.uid);
       setProfile(userProfile);
+
+      const isBarber =
+        userProfile?.role === 'barber' ||
+        userProfile?.userType === 'barber';
+
+      const hasSubscriptionRecord =
+        !!userProfile?.subscription?.subscriptionId ||
+        !!userProfile?.subscriptionId ||
+        !!userProfile?.paymentInfo?.subscriptionId;
+
+      const hasActiveSubscription =
+        userProfile?.subscription?.status === 'active' ||
+        userProfile?.subscription?.active === true ||
+        userProfile?.paymentInfo?.subscriptionActive === true;
+
+      const hasCompletedConnectOnboarding =
+        userProfile?.stripeConnectOnboardingComplete === true ||
+        !!userProfile?.stripeConnectAccountId ||
+        !!userProfile?.stripeAccountId;
+
+      if (isBarber && hasCompletedConnectOnboarding && !hasSubscriptionRecord) {
+
+        setSetupPending(true);
+        setSetupMessage('Finishing setup… syncing your subscription.');
+
+        const maxAttempts = 6;
+        let latest = userProfile;
+
+        for (let i = 0; i < maxAttempts; i++) {
+          await sleep(2000);
+
+          latest = await getUserProfile(user.uid);
+          setProfile(latest);
+
+          const nowHasSubscriptionRecord =
+            !!latest?.subscription?.subscriptionId ||
+            !!latest?.subscriptionId ||
+            !!latest?.paymentInfo?.subscriptionId;
+
+          if (nowHasSubscriptionRecord) {
+            setSetupPending(false);
+            setSetupMessage('');
+            userProfile = latest;
+            break;
+          }
+        }
+
+        const stillMissing =
+          !(
+            !!latest?.subscription?.subscriptionId ||
+            !!latest?.subscriptionId ||
+            !!latest?.paymentInfo?.subscriptionId
+          );
+
+        if (stillMissing) {
+          setSetupPending(false);
+          setSetupMessage('');
+          router.replace('/(app)/(barber)/subscription');
+          return;
+        }
+      }
+
+      if (isBarber && !hasActiveSubscription && !hasCompletedConnectOnboarding) {
+        router.replace('/(app)/(barber)/subscription');
+        return;
+      }
+
+      const status = userProfile?.subscription?.status;
+
+      if (isBarber && hasSubscriptionRecord && status && status !== 'active') {
+        setSetupPending(true);
+        setSetupMessage(
+          status === 'incomplete'
+            ? 'Subscription created — awaiting payment confirmation…'
+            : `Subscription status: ${status}`
+        );
+      }
 
       const appts = await getBarberAppointments(user.uid);
       setAppointments(appts || []);
+
+    } catch (error) {
+      console.error('Failed to load barber dashboard data:', error);
     } finally {
       setLoading(false);
     }
-  }, []);
+
+  }, [router]);
 
   useFocusEffect(
     useCallback(() => {
       fetchData();
     }, [fetchData])
   );
-
-  /* =============================
-     METRICS
-  ============================= */
 
   const todayCount = useMemo(
     () => appointments.filter(isToday).length,
@@ -85,17 +173,19 @@ export default function BarberDashboardScreen() {
 
   const upcomingCount = useMemo(
     () =>
-      appointments.filter(
-        (a) => a.status === 'confirmed' && isUpcoming(a)
-      ).length,
+      appointments.filter((a) => a.status === 'confirmed' && isUpcoming(a))
+        .length,
     [appointments]
   );
 
   const totalBooked = appointments.length;
 
   const recoveredRevenue = useMemo(() => {
+
     const now = new Date();
+
     const totalCents = appointments.reduce((sum, a) => {
+
       const ns = a?.noShowProtection;
       if (ns?.status !== 'charged') return sum;
 
@@ -114,9 +204,11 @@ export default function BarberDashboardScreen() {
       }
 
       return sum;
+
     }, 0);
 
     return (totalCents / 100).toFixed(2);
+
   }, [appointments]);
 
   const upcomingAppointments = appointments
@@ -124,6 +216,7 @@ export default function BarberDashboardScreen() {
     .slice(0, 5);
 
   const handleLogout = () => {
+
     Alert.alert('Logout?', '', [
       { text: 'Cancel', style: 'cancel' },
       {
@@ -135,6 +228,7 @@ export default function BarberDashboardScreen() {
         },
       },
     ]);
+
   };
 
   if (loading) {
@@ -146,11 +240,15 @@ export default function BarberDashboardScreen() {
   }
 
   return (
+
     <SafeAreaView style={styles.container}>
+
       <FlatList
         data={upcomingAppointments}
         keyExtractor={(item) => item.id}
+
         renderItem={({ item }) => (
+
           <TouchableOpacity
             style={styles.apptCard}
             onPress={() =>
@@ -160,26 +258,28 @@ export default function BarberDashboardScreen() {
               })
             }
           >
+
             <View>
-              <Text style={styles.apptCustomer}>
-                {item.customerName}
-              </Text>
-              <Text style={styles.apptService}>
-                {item.serviceName}
-              </Text>
+              <Text style={styles.apptCustomer}>{item.customerName}</Text>
+              <Text style={styles.apptService}>{item.serviceName}</Text>
               <Text style={styles.apptTime}>
                 {item.date} @ {item.time}
               </Text>
             </View>
+
             <Ionicons name="chevron-forward" size={18} />
+
           </TouchableOpacity>
+
         )}
+
         ListHeaderComponent={
+
           <>
+
             <View style={styles.header}>
-              <Text style={styles.welcome}>
-                Welcome, {profile?.name}
-              </Text>
+              <Text style={styles.welcome}>Welcome, {profile?.name}</Text>
+
               <TouchableOpacity onPress={handleLogout}>
                 <Ionicons
                   name="log-out-outline"
@@ -189,57 +289,99 @@ export default function BarberDashboardScreen() {
               </TouchableOpacity>
             </View>
 
+            {setupPending && (
+              <View style={styles.setupBanner}>
+                <ActivityIndicator />
+                <Text style={styles.setupText}>
+                  {setupMessage || 'Finishing setup…'}
+                </Text>
+              </View>
+            )}
+
             <View style={styles.metricsRow}>
+
               <View style={styles.metricCard}>
                 <Text style={styles.metricNumber}>{todayCount}</Text>
                 <Text style={styles.metricLabel}>Today</Text>
               </View>
 
               <View style={styles.metricCard}>
-                <Text style={styles.metricNumber}>
-                  {upcomingCount}
-                </Text>
-                <Text style={styles.metricLabel}>
-                  Upcoming (Next 5)
-                </Text>
+                <Text style={styles.metricNumber}>{upcomingCount}</Text>
+                <Text style={styles.metricLabel}>Upcoming</Text>
               </View>
 
               <View style={styles.metricCard}>
-                <Text style={styles.metricNumber}>
-                  {totalBooked}
-                </Text>
-                <Text style={styles.metricLabel}>
-                  Total Booked
-                </Text>
+                <Text style={styles.metricNumber}>{totalBooked}</Text>
+                <Text style={styles.metricLabel}>Total Booked</Text>
               </View>
+
             </View>
 
             <View style={styles.recoveredCard}>
-              <Text style={styles.recoveredAmount}>
-                ${recoveredRevenue}
-              </Text>
-              <Text style={styles.recoveredLabel}>
-                Recovered This Month
-              </Text>
+              <Text style={styles.recoveredAmount}>${recoveredRevenue}</Text>
+              <Text style={styles.recoveredLabel}>Recovered This Month</Text>
             </View>
 
-            <Text style={styles.sectionTitle}>
-              Upcoming Appointments
-            </Text>
+            {/* Quick Links */}
+
+            <Text style={styles.sectionTitle}>Quick Actions</Text>
+
+            <View style={styles.quickLinks}>
+
+              <TouchableOpacity
+                style={styles.quickButton}
+                onPress={() =>
+                  router.push('/(app)/(barber)/all-appointments')
+                }
+              >
+                <Text style={styles.quickText}>All Appointments</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.quickButton}
+                onPress={() =>
+                  router.push('/(app)/(barber)/bulletin')
+                }
+              >
+                <Text style={styles.quickText}>Bulletin</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.quickButton}
+                onPress={() =>
+                  router.push('/(app)/(barber)/faq')
+                }
+              >
+                <Text style={styles.quickText}>FAQ</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.quickButton}
+                onPress={() =>
+                  router.push('/(app)/(barber)/chat-assistant')
+                }
+              >
+                <Text style={styles.quickText}>AI Assistant</Text>
+              </TouchableOpacity>
+
+            </View>
+
+            <Text style={styles.sectionTitle}>Upcoming Appointments</Text>
+
           </>
         }
+
         contentContainerStyle={{ paddingBottom: 30 }}
       />
+
     </SafeAreaView>
   );
 }
 
-/* =============================
-   STYLES
-============================= */
-
 const styles = StyleSheet.create({
+
   container: { flex: 1, backgroundColor: '#f0f2f5' },
+
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
 
   header: {
@@ -248,7 +390,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
+
   welcome: { fontSize: 20, fontWeight: '700' },
+
+  setupBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#fff8e1',
+    marginHorizontal: 16,
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 12,
+  },
+
+  setupText: {
+    flex: 1,
+    color: '#6b4f00',
+    fontWeight: '600',
+  },
 
   metricsRow: {
     flexDirection: 'row',
@@ -256,6 +416,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     marginTop: 16,
   },
+
   metricCard: {
     backgroundColor: '#fff',
     flex: 1,
@@ -264,11 +425,13 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
   },
+
   metricNumber: {
     fontSize: 26,
     fontWeight: '700',
     color: '#2196F3',
   },
+
   metricLabel: {
     marginTop: 6,
     fontSize: 12,
@@ -283,11 +446,13 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
   },
+
   recoveredAmount: {
     fontSize: 28,
     fontWeight: '800',
     color: '#2e7d32',
   },
+
   recoveredLabel: {
     fontSize: 13,
     marginTop: 4,
@@ -300,6 +465,22 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
 
+  quickLinks: {
+    marginHorizontal: 16,
+    marginBottom: 10,
+  },
+
+  quickButton: {
+    backgroundColor: '#fff',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 10,
+  },
+
+  quickText: {
+    fontWeight: '600',
+  },
+
   apptCard: {
     backgroundColor: '#fff',
     marginHorizontal: 16,
@@ -310,7 +491,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+
   apptCustomer: { fontWeight: '700' },
+
   apptService: { color: '#555' },
+
   apptTime: { color: '#777', marginTop: 4 },
+
 });

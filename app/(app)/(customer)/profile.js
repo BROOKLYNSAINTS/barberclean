@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, ActivityIndicator, Alert } from 'react-native';
 //import { getUserProfile, logoutUser, auth } from '@/services/firebase'; // Adjusted path
-import { getUserProfile, logoutUser} from '@/services/firebase'; // Adjusted path
+import { getUserProfile, logoutUser, auth } from '@/services/firebase'; // Adjusted path
 
 import { useRouter } from 'expo-router';
 
@@ -11,11 +11,11 @@ const ProfileScreen = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const fetchProfileData = async () => {
+  const fetchProfileData = useCallback(async (userOverride = null) => {
     setLoading(true);
     setError('');
     try {
-      const user = auth.currentUser;
+      const user = userOverride || auth.currentUser;
       if (user) {
         const userProfile = await getUserProfile(user.uid);
         if (userProfile) {
@@ -35,20 +35,20 @@ const ProfileScreen = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [router]);
 
   useEffect(() => {
     // Subscribe to auth state changes to refetch profile if user changes
     const unsubscribe = auth.onAuthStateChanged(user => {
       if (user) {
-        fetchProfileData();
+        fetchProfileData(user);
       } else {
         setLoading(false);
         router.replace('/(auth)/login');
       }
     });
     return () => unsubscribe(); // Cleanup subscription
-  }, [router]);
+  }, [fetchProfileData, router]);
 
   const handleLogout = async () => {
     try {

@@ -12,15 +12,24 @@ import {
   Platform,
   TouchableWithoutFeedback,
   Keyboard,
+  TouchableOpacity,
 } from 'react-native';
+import { useRouter } from 'expo-router';
 import { useAuth } from '../../../src/contexts/AuthContext';
-import { getFirestore, doc, getDoc, updateDoc } from 'firebase/firestore';
+import {
+  getFirestore,
+  doc,
+  getDoc,
+  updateDoc,
+  deleteDoc,
+} from 'firebase/firestore';
+import { deleteUser, updatePassword } from 'firebase/auth';
 import { app } from '../../../src/services/firebase';
-import { updatePassword } from 'firebase/auth';
 
 const db = getFirestore(app);
 
 export default function EditProfileScreen() {
+  const router = useRouter();
   const { currentUser, loading: authLoading } = useAuth();
   const [loading, setLoading] = useState(true);
 
@@ -31,7 +40,6 @@ export default function EditProfileScreen() {
   const [email, setEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
 
-  // refs to move focus with "Next"
   const addressRef = useRef(null);
   const zipcodeRef = useRef(null);
   const phoneRef = useRef(null);
@@ -85,6 +93,46 @@ export default function EditProfileScreen() {
     }
   };
 
+  // 🔥 DELETE ACCOUNT FUNCTION (Customer)
+  const handleDeleteAccount = async () => {
+    Alert.alert(
+      'Delete Account',
+      'Are you sure you want to permanently delete your account? This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete My Account',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setLoading(true);
+
+              const userId = currentUser.uid;
+
+              // 1️⃣ Delete Firestore user document
+              await deleteDoc(doc(db, 'users', userId));
+
+              // 2️⃣ Delete Firebase Auth user
+              await deleteUser(currentUser);
+
+              Alert.alert('Account Deleted', 'Your account has been permanently deleted.');
+
+              router.replace('/(auth)/login');
+            } catch (err) {
+              console.error('Delete account error:', err);
+              Alert.alert(
+                'Error',
+                'Unable to delete account. You may need to log in again.'
+              );
+            } finally {
+              setLoading(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   if (authLoading || loading) {
     return (
       <View style={styles.centered}>
@@ -99,7 +147,7 @@ export default function EditProfileScreen() {
       style={{ flex: 1 }}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 64 : 0}
-   >
+    >
       <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
         <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
           <View style={styles.header}>
@@ -166,6 +214,18 @@ export default function EditProfileScreen() {
           />
 
           <Button title="Save Changes" onPress={handleSave} />
+
+          {/* 🔥 DELETE SECTION */}
+          <View style={styles.deleteSection}>
+            <Text style={styles.deleteTitle}>Danger Zone</Text>
+            <TouchableOpacity
+              style={styles.deleteButton}
+              onPress={handleDeleteAccount}
+            >
+              <Text style={styles.deleteButtonText}>Delete Account</Text>
+            </TouchableOpacity>
+          </View>
+
         </ScrollView>
       </TouchableWithoutFeedback>
     </KeyboardAvoidingView>
@@ -175,14 +235,13 @@ export default function EditProfileScreen() {
 const styles = StyleSheet.create({
   container: {
     padding: 20,
-    paddingBottom: 40,
+    paddingBottom: 60,
     backgroundColor: '#fff',
   },
   header: {
-    paddingTop: 48, // Adjust as needed for spacing
+    paddingTop: 48,
     paddingBottom: 12,
     alignItems: 'center',
-    backgroundColor: '#fff',
   },
   headerTitle: {
     fontSize: 22,
@@ -209,5 +268,28 @@ const styles = StyleSheet.create({
   },
   disabled: {
     backgroundColor: '#f0f0f0',
+  },
+  deleteSection: {
+    marginTop: 40,
+    paddingTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
+  },
+  deleteTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: 'red',
+    marginBottom: 12,
+  },
+  deleteButton: {
+    backgroundColor: '#ff3b30',
+    padding: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  deleteButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 16,
   },
 });

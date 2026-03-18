@@ -14,21 +14,44 @@ export default function CancelAppointmentScreen() {
   const [appointment, setAppointment] = useState(null);
   const [fetching, setFetching] = useState(true);
 
-  // Accept either an appointment json param or an appointmentId param
-  const appointmentId = useMemo(() => {
-    if (params?.appointmentId) return String(params.appointmentId);
-    if (params?.id) return String(params.id);
-    return null;
-  }, [params?.appointmentId, params?.id]);
+  const firstParam = (value) => {
+    if (Array.isArray(value)) return value[0];
+    return value;
+  };
 
   const appointmentParam = useMemo(() => {
-    if (!params?.appointment) return null;
+    const rawAppointment = firstParam(params?.appointment);
+    if (!rawAppointment) return null;
+    if (typeof rawAppointment === 'object') return rawAppointment;
+
     try {
-      return JSON.parse(String(params.appointment));
+      return JSON.parse(String(rawAppointment));
     } catch {
-      return null;
+      try {
+        return JSON.parse(decodeURIComponent(String(rawAppointment)));
+      } catch {
+        return null;
+      }
     }
   }, [params?.appointment]);
+
+  // Accept either an appointment json param or an appointmentId param
+  const appointmentId = useMemo(() => {
+    const rawAppointmentId = firstParam(params?.appointmentId);
+    const rawId = firstParam(params?.id);
+    if (rawAppointmentId) return String(rawAppointmentId);
+    if (rawId) return String(rawId);
+    if (appointmentParam?.id) return String(appointmentParam.id);
+    if (appointmentParam?.appointmentId) return String(appointmentParam.appointmentId);
+    return null;
+  }, [params?.appointmentId, params?.id, appointmentParam?.id, appointmentParam?.appointmentId]);
+
+  const normalizedAppointmentParam = useMemo(() => {
+    if (!appointmentParam) return null;
+    const id = appointmentParam.id || appointmentParam.appointmentId || null;
+    if (!id) return appointmentParam;
+    return { ...appointmentParam, id: String(id) };
+  }, [appointmentParam]);
 
   // ✅ Load appointment if not provided
   useEffect(() => {
@@ -39,8 +62,8 @@ export default function CancelAppointmentScreen() {
         setFetching(true);
 
         // If screen was passed appointment JSON, use it
-        if (appointmentParam?.id) {
-          if (alive) setAppointment(appointmentParam);
+        if (normalizedAppointmentParam?.id) {
+          if (alive) setAppointment(normalizedAppointmentParam);
           return;
         }
 
@@ -61,7 +84,7 @@ export default function CancelAppointmentScreen() {
     return () => {
       alive = false;
     };
-  }, [appointmentId, appointmentParam]);
+  }, [appointmentId, normalizedAppointmentParam]);
 
   const doCancel = useCallback(async () => {
     if (!currentUser?.uid) {

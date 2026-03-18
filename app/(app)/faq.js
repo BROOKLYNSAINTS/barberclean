@@ -4,6 +4,11 @@ import { Ionicons } from '@expo/vector-icons';
 
 const faqs = [
   {
+  q: 'How do I delete my account?',
+  a: 'Open the Profile tab and tap “Edit Profile.” Scroll to the bottom and select “Delete Account.” For security, you may be asked to log in again before your account is permanently removed. Deleting your account will immediately cancel any active subscriptions and permanently remove your data.'
+  },
+
+  {
     q: 'How do I book an appointment?',
     a: 'Go to the Home section, enter your zip code, choose a barber, select a service and time, then confirm your booking.'
   },

@@ -8,64 +8,33 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  Switch,
   Alert,
-  Linking,
 } from 'react-native';
+
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import Constants from 'expo-constants';
 
 import { db } from '@/services/firebase';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
-import { createSubscriptionPaymentSheet, useStripe } from '@/services/stripe';
 
 export default function ProfileSetupScreen() {
+
   const router = useRouter();
-  const stripe = useStripe();
-  const { userId, email } = useLocalSearchParams();
+  const { userId } = useLocalSearchParams();
 
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
   const [zipcode, setZipcode] = useState('');
-  const [isBarber, setIsBarber] = useState(false);
+
+  const [selectedRole, setSelectedRole] = useState('customer');
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  /* -----------------------------------------
-   * BARBER SUBSCRIPTION
-   * ----------------------------------------- */
-  const handleBarberSubscription = async () => {
-    if (!stripe) return false;
-
-    const PRICE_ID =
-      Constants.expoConfig?.extra?.stripeSubscriptionPriceId ||
-      process.env.EXPO_PUBLIC_STRIPE_SUBSCRIPTION_PRICE_ID;
-
-    if (!PRICE_ID) return false;
-
-    const result = await createSubscriptionPaymentSheet(
-      stripe,
-      userId,
-      PRICE_ID,
-      email
-    );
-
-    if (!result?.success) return false;
-
-    if (result.onboardingUrl) {
-      await Linking.openURL(result.onboardingUrl);
-    }
-
-    return true;
-  };
-
-  /* -----------------------------------------
-   * SAVE PROFILE (SAFE)
-   * ----------------------------------------- */
   const handleSaveProfile = async () => {
+
     try {
+
       if (!name || !phone || !address || !zipcode) {
         setError('All fields are required.');
         return;
@@ -74,14 +43,6 @@ export default function ProfileSetupScreen() {
       setLoading(true);
       setError('');
 
-      if (isBarber) {
-        const ok = await handleBarberSubscription();
-        if (!ok) {
-          setLoading(false);
-          return;
-        }
-      }
-
       const userRef = doc(db, 'users', userId);
 
       const payload = {
@@ -89,49 +50,50 @@ export default function ProfileSetupScreen() {
         phone,
         address,
         zipcode,
-        role: isBarber ? 'barber' : 'customer',
-        userType: isBarber ? 'barber' : 'customer',
+        role: selectedRole,
+        userType: selectedRole,
         updatedAt: serverTimestamp(),
       };
 
-      if (isBarber) {
-        payload.noShowSettings = {
-          enabled: true,
-          feeType: 'flat',
-          feeAmount: 25,
-          cancellationWindowHours: 24,
-          updatedAt: new Date().toISOString(),
-        };
-
-        payload.metrics = {
-          recoveredRevenue: 0,
-        };
-      }
-
-      // ✅ UPDATE ONLY — NEVER overwrite Stripe fields
       await updateDoc(userRef, payload);
 
-      router.replace(
-        isBarber ? '/(app)/(barber)/dashboard' : '/(app)/(customer)/'
-      );
+      // If barber → go to subscription screen
+      if (selectedRole === 'barber') {
+
+        router.push({
+          pathname: '/(auth)/barber-subscription',
+          params: { userId }
+        });
+
+      } else {
+
+        router.replace('/(app)/(customer)/');
+
+      }
+
     } catch (err) {
+
       Alert.alert('Profile Error', err.message);
+
     } finally {
+
       setLoading(false);
+
     }
+
   };
 
-  /* -----------------------------------------
-   * UI
-   * ----------------------------------------- */
   return (
+
     <View style={styles.container}>
+
       <ScrollView contentContainerStyle={styles.scroll}>
+
         <Text style={styles.title}>Profile Setup</Text>
 
         <TextInput
           style={styles.input}
-          placeholder="Business / Full Name"
+          placeholder="Full Name"
           value={name}
           onChangeText={setName}
         />
@@ -159,9 +121,30 @@ export default function ProfileSetupScreen() {
           keyboardType="numeric"
         />
 
-        <View style={styles.switchRow}>
-          <Text style={styles.switchLabel}>I am a barber</Text>
-          <Switch value={isBarber} onValueChange={setIsBarber} />
+        <Text style={styles.roleTitle}>Account Type</Text>
+
+        <View style={styles.roleContainer}>
+
+          <TouchableOpacity
+            style={[
+              styles.roleButton,
+              selectedRole === 'customer' && styles.roleSelected
+            ]}
+            onPress={() => setSelectedRole('customer')}
+          >
+            <Text style={styles.roleText}>Customer</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.roleButton,
+              selectedRole === 'barber' && styles.roleSelected
+            ]}
+            onPress={() => setSelectedRole('barber')}
+          >
+            <Text style={styles.roleText}>Barber</Text>
+          </TouchableOpacity>
+
         </View>
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -171,26 +154,41 @@ export default function ProfileSetupScreen() {
           onPress={handleSaveProfile}
           disabled={loading}
         >
+
           <Text style={styles.buttonText}>
-            {loading
-              ? 'Processing...'
-              : isBarber
-              ? 'Subscribe & Continue'
-              : 'Save Profile'}
+            {loading ? 'Processing...' : 'Save Profile'}
           </Text>
+
         </TouchableOpacity>
+
       </ScrollView>
+
     </View>
+
   );
+
 }
 
-/* -----------------------------------------
- * STYLES
- * ----------------------------------------- */
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff', padding: 16 },
-  scroll: { flexGrow: 1, justifyContent: 'center' },
-  title: { fontSize: 24, fontWeight: '700', textAlign: 'center', marginBottom: 24 },
+
+  container: {
+    flex: 1,
+    backgroundColor: '#fff',
+    padding: 16,
+  },
+
+  scroll: {
+    flexGrow: 1,
+    justifyContent: 'center',
+  },
+
+  title: {
+    fontSize: 24,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+
   input: {
     height: 50,
     borderWidth: 1,
@@ -199,14 +197,55 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     marginBottom: 14,
   },
-  switchRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 16 },
-  switchLabel: { flex: 1, fontSize: 16 },
+
+  roleTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+
+  roleContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginBottom: 20,
+  },
+
+  roleButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 8,
+    marginHorizontal: 10,
+  },
+
+  roleSelected: {
+    backgroundColor: '#007bff',
+  },
+
+  roleText: {
+    color: '#000',
+    fontWeight: '600',
+  },
+
   button: {
     backgroundColor: '#007bff',
     paddingVertical: 16,
     borderRadius: 8,
     alignItems: 'center',
   },
-  buttonText: { color: '#fff', fontSize: 18, fontWeight: '700' },
-  error: { color: 'red', textAlign: 'center', marginBottom: 12 },
+
+  buttonText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+
+  error: {
+    color: 'red',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+
 });

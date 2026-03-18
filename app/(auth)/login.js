@@ -1,86 +1,110 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, StyleSheet, TouchableOpacity, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
+import {
+  View,
+  Text,
+  TextInput,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  KeyboardAvoidingView,
+  Platform,
+  Linking
+} from 'react-native';
 import { useRouter } from 'expo-router';
 import { loginWithEmail } from '@/services/restAuth';
-import { getUserProfile } from '@/services/firebase'; // Add this at the top
+import { getUserProfile } from '@/services/firebase';
 
-import { registerForPushNotifications, saveNotificationToken } from '@/services/notifications';
+import {
+  registerForPushNotifications,
+  saveNotificationToken
+} from '@/services/notifications';
 
+export default function LoginWithEmail() {
 
-export default function LoginWithEmail () {  
-  
-  
-  
   const router = useRouter();
-  const devBypass = false; // ✅ Set to false when ready to test login normally
-
-  useEffect(() => {
-    if (devBypass) {
-      console.log('🛠 Dev bypass active. Redirecting to /customer...');
-      router.replace('/(app)/(customer)/');
-    }
-  }, []);
-
-  // Skip rendering form if bypassing
-  if (devBypass) return null;
+  const devBypass = false;
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
-const handleLogin = async () => {
-  console.log('🔄 Login button pressed');
-  try {
-    if (!email || !password) {
-      setError('Please enter both email and password');
-      return;
+  useEffect(() => {
+    if (devBypass) {
+      router.replace('/(app)/(customer)/');
     }
-    setLoading(true);
-    setError('');
-    console.log('📤 Sending credentials to Firebase...');
-    const user = await loginWithEmail(email, password);
-    console.log('✅ Firebase login response:', user);
+  }, [devBypass]);
 
-    // 👇 Fetch Firestore profile
-    const profile = await getUserProfile(user.uid);
-    console.log('🎭 User role from Firestore:', profile?.role);
+  if (devBypass) return null;
 
+  const handleLogin = async () => {
 
-    // 👇 Role-based redirect
-    if (profile?.role === 'barber') {
-      router.replace('/(app)/(barber)/dashboard');
-    } else {
-      router.replace('/(app)/(customer)');
+    try {
+
+      if (!email || !password) {
+        setError('Please enter both email and password');
+        return;
+      }
+
+      setLoading(true);
+      setError('');
+
+      const user = await loginWithEmail(email, password);
+
+      const profile = await getUserProfile(user.uid);
+
+      if (profile?.role === 'barber') {
+        router.replace('/(app)/(barber)/dashboard');
+      } else {
+        router.replace('/(app)/(customer)');
+      }
+
+      const token = await registerForPushNotifications();
+
+      if (token) {
+        await saveNotificationToken(user.uid, token);
+      }
+
+    } catch (error) {
+
+      console.log('Login error:', error);
+      setError('Login failed. Please try again.');
+
+    } finally {
+
+      setLoading(false);
+
     }
 
-    // ✅ Notification setup
-    const token = await registerForPushNotifications();
-    console.log('🔔 Notification token:', token);
-    if (token) {
-      await saveNotificationToken(user.uid, token);
-    }
-  } catch (error) {
-    console.log('🚫 Login error:', error);
-    setError('Login failed. Please try again.');
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
   return (
+
     <KeyboardAvoidingView
       style={{ flex: 1 }}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
     >
+
       <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.title}>Welcome Back</Text>
+
+        <Text style={styles.appTitle}>ScheduleSync</Text>
+
+        <Text style={styles.appDescription}>
+          ScheduleSync allows customers to book barber appointments,
+          receive SMS reminders, and manage their bookings.
+        </Text>
+
+        <Text style={styles.title}>Login</Text>
+
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
         <View style={styles.inputContainer}>
+
           <Text style={styles.label}>Email</Text>
+
           <TextInput
             style={styles.input}
             placeholder="Enter your email"
@@ -89,11 +113,15 @@ const handleLogin = async () => {
             keyboardType="email-address"
             autoCapitalize="none"
           />
+
         </View>
 
         <View style={styles.inputContainer}>
+
           <Text style={styles.label}>Password</Text>
+
           <View style={styles.passwordRow}>
+
             <TextInput
               style={[styles.input, styles.passwordInput]}
               placeholder="Enter your password"
@@ -101,24 +129,29 @@ const handleLogin = async () => {
               onChangeText={setPassword}
               secureTextEntry={!showPassword}
             />
+
             <TouchableOpacity
-              onPress={() => setShowPassword((prev) => !prev)}
+              onPress={() => setShowPassword(prev => !prev)}
               style={styles.eyeButton}
             >
-              <Text style={styles.eyeText}>{showPassword ? 'Hide' : 'Show'}</Text>
+              <Text style={styles.eyeText}>
+                {showPassword ? 'Hide' : 'Show'}
+              </Text>
             </TouchableOpacity>
+
           </View>
+
         </View>
 
-        <TouchableOpacity 
+        <TouchableOpacity
           onPress={() => router.push('/(auth)/forgot-password')}
           style={styles.forgotPassword}
         >
           <Text style={styles.link}>Forgot Password?</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity 
-          style={styles.button} 
+        <TouchableOpacity
+          style={styles.button}
           onPress={handleLogin}
           disabled={loading}
         >
@@ -127,88 +160,156 @@ const handleLogin = async () => {
           </Text>
         </TouchableOpacity>
 
+        {/* CUSTOMER REGISTRATION */}
+
         <View style={styles.footer}>
+
           <Text>Don't have an account? </Text>
-          <TouchableOpacity onPress={() => router.push('/(auth)/register')}>
-            <Text style={styles.link}>Register</Text>
+
+          <TouchableOpacity
+            onPress={() => router.push('/(auth)/register')}
+          >
+            <Text style={styles.link}> Register</Text>
           </TouchableOpacity>
+
         </View>
+
+
       </ScrollView>
+
     </KeyboardAvoidingView>
+
   );
-};
+
+}
 
 const styles = StyleSheet.create({
+
   container: {
     flexGrow: 1,
     padding: 20,
     backgroundColor: '#fff',
-    justifyContent: 'center',
+    justifyContent: 'center'
   },
+
+  appTitle: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 10
+  },
+
+  appDescription: {
+    textAlign: 'center',
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 10,
+    color: '#555'
+  },
+
   title: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: 'bold',
     marginBottom: 20,
-    textAlign: 'center',
+    textAlign: 'center'
   },
+
   inputContainer: {
-    marginBottom: 15,
+    marginBottom: 15
   },
+
   label: {
     marginBottom: 5,
-    fontWeight: '500',
+    fontWeight: '500'
   },
+
   input: {
     borderWidth: 1,
     borderColor: '#ddd',
     borderRadius: 8,
     padding: 12,
-    fontSize: 16,
+    fontSize: 16
   },
+
   passwordRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'center'
   },
+
   passwordInput: {
-    flex: 1,
+    flex: 1
   },
+
   eyeButton: {
     marginLeft: 10,
     paddingHorizontal: 8,
-    paddingVertical: 6,
+    paddingVertical: 6
   },
+
   eyeText: {
     color: '#2196F3',
-    fontWeight: '500',
+    fontWeight: '500'
   },
+
   forgotPassword: {
     alignSelf: 'flex-end',
-    marginBottom: 15,
+    marginBottom: 15
   },
+
   button: {
     backgroundColor: '#2196F3',
     padding: 15,
     borderRadius: 8,
-    alignItems: 'center',
+    alignItems: 'center'
   },
+
   buttonText: {
     color: '#fff',
     fontSize: 16,
-    fontWeight: 'bold',
+    fontWeight: 'bold'
   },
+
   footer: {
     flexDirection: 'row',
     justifyContent: 'center',
-    marginTop: 20,
+    marginTop: 20
   },
+
   link: {
     color: '#2196F3',
-    fontWeight: 'bold',
+    fontWeight: 'bold'
   },
+
+  barberBox: {
+    marginTop: 35,
+    padding: 15,
+    borderRadius: 10,
+    backgroundColor: '#f3f3f3',
+    alignItems: 'center'
+  },
+
+  barberTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 5
+  },
+
+  barberText: {
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: 6
+  },
+
+  barberLink: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#007bff'
+  },
+
   errorText: {
     color: 'red',
     marginBottom: 10,
-    textAlign: 'center',
-  },
-});
+    textAlign: 'center'
+  }
 
+});

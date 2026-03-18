@@ -11,6 +11,7 @@ import {
 } from 'firebase/auth';
 import {
   getFirestore,
+  runTransaction,
   doc,
   getDoc,
   getDocs,
@@ -137,7 +138,13 @@ export const getAppointmentReview = async (barberId, appointmentId) => {
 
   if (currentUserId) {
     const customerScopedId = `${appointmentId}_${currentUserId}`;
-    const customerScopedRef = doc(db, 'users', barberId, 'reviews', customerScopedId);
+    const customerScopedRef = doc(
+      db,
+      'users',
+      barberId,
+      'reviews',
+      customerScopedId
+    );
     const customerScopedSnap = await getDoc(customerScopedRef);
     if (customerScopedSnap.exists()) {
       return { id: customerScopedSnap.id, ...customerScopedSnap.data() };
@@ -247,7 +254,6 @@ export const upsertBarberReview = async ({
       { merge: true }
     );
   } catch (error) {
-    // Customers usually cannot update barber user profiles under current rules.
     console.warn('Review saved but barber aggregate update failed:', error);
   }
 
@@ -264,6 +270,10 @@ export const upsertBarberReview = async ({
 
   return { id: reviewRef.id, ...payload };
 };
+
+/* =========================================================
+   AVAILABILITY (FIXED – BLOCKS OVERLAPS BY DURATION)
+========================================================= */
 
 export const getBarberAvailability = async (barberId, selectedDate = null) => {
   if (!barberId) return [];
@@ -294,46 +304,63 @@ export const getBarberAvailability = async (barberId, selectedDate = null) => {
     return [];
   }
 
-  const bookedByDate = new Map();
+  const now = new Date();
+  const todayStr = toLocalDateString(now);
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+
+  // ✅ Booked RANGES by date (start/end minutes)
+  const bookedRangesByDate = new Map();
+
   try {
+    const dateToLoad = selectedDate || todayStr;
+
     const appointmentsSnap = await getDocs(
       query(
         collection(db, 'appointments'),
         where('barberId', '==', barberId),
+        where('date', '==', dateToLoad),
         where('status', '==', 'confirmed')
       )
     );
+
     for (const d of appointmentsSnap.docs) {
       const a = d.data() || {};
       if (!a.date) continue;
-      const t24 = a.time24 || toTime24(a.time);
-      if (!t24) continue;
-      if (!bookedByDate.has(a.date)) bookedByDate.set(a.date, new Set());
-      bookedByDate.get(a.date).add(t24);
+
+      const start24 = a.time24 || toTime24(a.time);
+      if (!start24) continue;
+
+      const apptStartMin = parseHHMMToMinutes(start24);
+      if (apptStartMin == null) continue;
+
+      const durationMin = Number(a.serviceDuration || 30);
+      const apptEndMin =
+        apptStartMin +
+        (Number.isFinite(durationMin) && durationMin > 0 ? durationMin : 30);
+
+      if (!bookedRangesByDate.has(a.date)) bookedRangesByDate.set(a.date, []);
+      bookedRangesByDate.get(a.date).push({ start: apptStartMin, end: apptEndMin });
     }
   } catch (error) {
     console.warn('Failed to load booked slots for barber availability:', error);
   }
 
-  const now = new Date();
-  const todayStr = toLocalDateString(now);
-  const nowMinutes = now.getHours() * 60 + now.getMinutes();
-
   const buildSlotsForDate = (dateStr) => {
     if (unavailableDates[dateStr]) return [];
 
-    const bookedSet = bookedByDate.get(dateStr) || new Set();
+    const bookedRanges = bookedRangesByDate.get(dateStr) || [];
     const isToday = dateStr === todayStr;
     const slots = [];
 
     for (let minute = startMin; minute + interval <= endMin; minute += interval) {
       if (isToday && minute <= nowMinutes) continue;
 
-      const hh = String(Math.floor(minute / 60)).padStart(2, '0');
-      const mm = String(minute % 60).padStart(2, '0');
-      const t24 = `${hh}:${mm}`;
+      const slotStart = minute;
+      const slotEnd = minute + interval;
 
-      if (bookedSet.has(t24)) continue;
+      const overlaps = bookedRanges.some((r) => slotStart < r.end && slotEnd > r.start);
+      if (overlaps) continue;
+
       slots.push({
         date: dateStr,
         time: formatMinutesTo12h(minute),
@@ -361,12 +388,12 @@ export const getBarberAvailability = async (barberId, selectedDate = null) => {
    TIME HELPERS (robust parsing)
 ========================================================= */
 
-// Converts "3:00 PM" or "3:00 PM" or "18:00" to "HH:MM"
+// Converts "3:00 PM" or "18:00" to "HH:MM"
 function toTime24(rawTime) {
   if (!rawTime) return null;
 
   const str = String(rawTime)
-    .replace(/\u202f|\u00a0/g, ' ') // narrow NBSP + NBSP
+    .replace(/\u202f|\u00a0/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -394,9 +421,22 @@ function toTime24(rawTime) {
   return `${String(h).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
 }
 
-// Build a JS Date from "YYYY-MM-DD" + time ("HH:MM")
+// ✅ Timestamp used by cron (this is what your cron logs were missing)
+function buildStartTimeTimestamp(dateStr, time24) {
+  if (!dateStr || !time24) return null;
+
+  const [y, m, d] = String(dateStr).split('-').map((v) => Number(v));
+  const [hh, mm] = String(time24).split(':').map((v) => Number(v));
+
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+
+  // Local time (NY device). This matches how your UI displays time.
+  const local = new Date(y, m - 1, d, hh, mm, 0, 0);
+  return Timestamp.fromDate(local);
+}
+
 function buildLocalDateTime(dateStr, time24) {
-  // Device is NY during your tests; this is fine for now.
   return new Date(`${dateStr}T${time24}:00`);
 }
 
@@ -427,6 +467,10 @@ function formatMinutesTo12h(totalMinutes) {
   });
 }
 
+function rangesOverlap(aStart, aEnd, bStart, bEnd) {
+  return aStart < bEnd && aEnd > bStart;
+}
+
 /* =========================================================
    NO SHOW SETTINGS HELPERS
 ========================================================= */
@@ -446,7 +490,6 @@ function normalizeNoShowSettings(raw) {
   };
 }
 
-// Compute cents
 function computeNoShowAmountCents(servicePriceDollars, settings) {
   const price = Number(servicePriceDollars || 0);
   if (!Number.isFinite(price) || price <= 0) return 0;
@@ -457,13 +500,13 @@ function computeNoShowAmountCents(servicePriceDollars, settings) {
     return Math.max(0, cents);
   }
 
-  // flat dollars
   const flat = Math.min(Math.max(Number(settings.feeAmount || 0), 0), 500);
   return Math.round(flat * 100);
 }
 
 /* =========================================================
-   APPOINTMENT CREATION
+   APPOINTMENT CREATION (UPDATED FOR CRON REMINDERS)
+   ✅ adds: startTime (Timestamp), customerPhone, barberTwilioNumber, smsOptIn
 ========================================================= */
 
 export async function createAppointment(data) {
@@ -472,68 +515,140 @@ export async function createAppointment(data) {
       throw new Error('Missing required appointment fields.');
     }
 
-    // Customer
-    const customerSnap = await getDoc(doc(db, 'users', data.customerId));
-    if (!customerSnap.exists()) throw new Error('Customer not found');
-    const customer = customerSnap.data() || {};
-
-    if (!customer.stripeCustomerId || !customer.defaultPaymentMethodId) {
-      throw new Error('Customer has no saved payment method');
-    }
-
-    // Barber
-    const barberSnap = await getDoc(doc(db, 'users', data.barberId));
-    if (!barberSnap.exists()) throw new Error('Barber not found');
-    const barber = barberSnap.data() || {};
-
-    const barberStripeAccountId =
-      barber.stripeConnectAccountId || barber.stripeAccountId || barber.stripeAccountId;
-
-    if (!barberStripeAccountId) {
-      throw new Error('Barber is not connected to Stripe');
-    }
-
-    // Barber no-show settings (THIS is the missing link in your current setup)
-    const barberNoShow = normalizeNoShowSettings(barber.noShowSettings);
-    const amountCents = barberNoShow.enabled
-      ? computeNoShowAmountCents(data.servicePrice, barberNoShow)
-      : 0;
-
     const appointmentRef = doc(collection(db, 'appointments'));
-    const now = Timestamp.now();
 
-    const appointmentData = {
-      ...data,
+    return await runTransaction(db, async (transaction) => {
+      const requestedTime24 = toTime24(data.time);
+      if (!requestedTime24) throw new Error('Invalid time selected.');
 
-      // Stripe linkage needed for charging later
-      customerStripeId: customer.stripeCustomerId,
-      customerStripePaymentMethodId: customer.defaultPaymentMethodId,
-      barberStripeAccountId,
+      const reqStart = parseHHMMToMinutes(requestedTime24);
+      if (reqStart == null) throw new Error('Invalid time selected.');
 
-      // Normalize time for cancel logic (keep original display too)
-      time: data.time, // keep UI value (ex "3:00 PM")
-      time24: toTime24(data.time) || null, // NEW canonical
+      const reqDuration = Number(data.serviceDuration || 30);
+      const safeReqDuration = Number.isFinite(reqDuration) && reqDuration > 0 ? reqDuration : 30;
+      const reqEnd = reqStart + safeReqDuration;
 
-      paymentStatus: 'unpaid',
-      status: 'confirmed',
+      // Check overlaps for barber/date
+      const existingQuery = query(
+        collection(db, 'appointments'),
+        where('barberId', '==', data.barberId),
+        where('date', '==', data.date),
+        where('status', '==', 'confirmed')
+      );
 
-      // Store the EXACT no-show config used for this appointment
-      noShowProtection: {
-        enabled: barberNoShow.enabled,
-        feeType: barberNoShow.feeType, // flat | percent
-        feeAmount: barberNoShow.feeAmount,
-        cancellationWindowHours: barberNoShow.cancellationWindowHours,
-        amountCents, // IMPORTANT (ex 2500)
-        status: 'none', // none | pending_charge | charged
-        paymentIntentId: null,
-      },
+      const existingSnap = await getDocs(existingQuery);
 
-      createdAt: now,
-      updatedAt: now,
-    };
+      for (const d of existingSnap.docs) {
+        const appt = d.data() || {};
+        const existingStart24 = appt.time24 || toTime24(appt.time);
+        if (!existingStart24) continue;
 
-    await setDoc(appointmentRef, appointmentData);
-    return { id: appointmentRef.id, ...appointmentData };
+        const exStart = parseHHMMToMinutes(existingStart24);
+        if (exStart == null) continue;
+
+        const exDur = Number(appt.serviceDuration || 30);
+        const safeExDur = Number.isFinite(exDur) && exDur > 0 ? exDur : 30;
+        const exEnd = exStart + safeExDur;
+
+        if (rangesOverlap(reqStart, reqEnd, exStart, exEnd)) {
+          throw new Error(
+            'This time overlaps an existing appointment. Please choose another time.'
+          );
+        }
+      }
+
+      // Customer
+      const customerRef = doc(db, 'users', data.customerId);
+      const customerSnap = await transaction.get(customerRef);
+      if (!customerSnap.exists()) throw new Error('Customer not found');
+      const customer = customerSnap.data() || {};
+
+      if (!customer.stripeCustomerId || !customer.defaultPaymentMethodId) {
+        throw new Error('Customer has no saved payment method');
+      }
+
+      // Barber
+      const barberRef = doc(db, 'users', data.barberId);
+      const barberSnap = await transaction.get(barberRef);
+      if (!barberSnap.exists()) throw new Error('Barber not found');
+      const barber = barberSnap.data() || {};
+
+      const barberStripeAccountId =
+        barber.stripeConnectAccountId || barber.stripeAccountId || barber.stripeAccountId;
+
+      if (!barberStripeAccountId) throw new Error('Barber is not connected to Stripe');
+
+      // ✅ barber twilio number MUST be on barber profile
+      const barberTwilioNumber =
+        barber.twilioNumber || barber.barberTwilioNumber || barber.twilioPhoneNumber || null;
+
+      if (!barberTwilioNumber) {
+        throw new Error('Barber is missing a Twilio number (twilioNumber).');
+      }
+
+      // ✅ customer phone MUST be on customer profile (or passed in)
+      const customerPhone = data.customerPhone || customer.phone || customer.customerPhone || null;
+
+      if (!customerPhone) {
+        throw new Error('Customer is missing a phone number.');
+      }
+
+      // No-show settings
+      const barberNoShow = normalizeNoShowSettings(barber.noShowSettings);
+      const amountCents = barberNoShow.enabled
+        ? computeNoShowAmountCents(data.servicePrice, barberNoShow)
+        : 0;
+
+      const now = Timestamp.now();
+
+      // ✅ startTime for cron window checks
+      const startTime = buildStartTimeTimestamp(data.date, requestedTime24);
+      if (!startTime) throw new Error('Failed to compute startTime timestamp.');
+
+      const appointmentData = {
+        ...data,
+
+        // Twilio reminder routing
+        barberTwilioNumber,
+        customerPhone,
+
+        // Stripe linkage needed for charging later
+        customerStripeId: customer.stripeCustomerId,
+        customerStripePaymentMethodId: customer.defaultPaymentMethodId,
+        barberStripeAccountId,
+
+        // Normalize time
+        time: data.time,
+        time24: requestedTime24,
+        startTime, // ✅ NEW REQUIRED FIELD FOR CRON
+
+        // Reminder flags
+        smsOptIn: typeof data.smsOptIn === 'boolean' ? data.smsOptIn : true,
+        smsOptInAt: data.smsOptInAt || new Date().toISOString(),
+        reminderSent: false,
+        reminderSentAt: null,
+
+        // Customer should NOT pay at booking (your rule)
+        paymentStatus: 'unpaid',
+        status: 'confirmed',
+
+        noShowProtection: {
+          enabled: barberNoShow.enabled,
+          feeType: barberNoShow.feeType,
+          feeAmount: barberNoShow.feeAmount,
+          cancellationWindowHours: barberNoShow.cancellationWindowHours,
+          amountCents,
+          status: 'none',
+          paymentIntentId: null,
+        },
+
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      transaction.set(appointmentRef, appointmentData);
+      return { id: appointmentRef.id, ...appointmentData };
+    });
   } catch (err) {
     console.error('❌ Failed to create appointment:', err);
     throw err;
@@ -553,7 +668,6 @@ export const cancelAppointment = async (appointmentId, userId) => {
 
     const appt = snap.data() || {};
 
-    // If already cancelled, just return success (idempotent)
     if (appt.status === 'cancelled') {
       return { success: true, alreadyCancelled: true };
     }
@@ -563,10 +677,8 @@ export const cancelAppointment = async (appointmentId, userId) => {
     const windowHours = Number(ns.cancellationWindowHours ?? 24);
     const amountCents = Number(ns.amountCents ?? 0);
 
-    // Compute how close to appointment
     const t24 = appt.time24 || toTime24(appt.time);
     if (!t24) {
-      // Cancel anyway if time parsing fails
       await updateDoc(appointmentRef, {
         status: 'cancelled',
         cancelledAt: serverTimestamp(),
@@ -585,12 +697,11 @@ export const cancelAppointment = async (appointmentId, userId) => {
     let paymentStatus = appt.paymentStatus || 'unpaid';
     let paymentIntentId = ns.paymentIntentId || null;
 
-    // Only charge if within window AND enabled AND amount > 0
     const shouldCharge =
       enabled &&
       Number.isFinite(windowHours) &&
       diffHours <= windowHours &&
-      diffHours >= 0 && // future appt only
+      diffHours >= 0 &&
       amountCents > 0;
 
     if (shouldCharge) {
@@ -659,19 +770,13 @@ export const cancelAppointment = async (appointmentId, userId) => {
 ========================================================= */
 
 export const getAppointmentsByBarber = async (barberId) => {
-  const qRef = query(
-    collection(db, 'appointments'),
-    where('barberId', '==', barberId)
-  );
+  const qRef = query(collection(db, 'appointments'), where('barberId', '==', barberId));
   const snap = await getDocs(qRef);
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 };
 
 export const getCustomerAppointments = async (customerId) => {
-  const qRef = query(
-    collection(db, 'appointments'),
-    where('customerId', '==', customerId)
-  );
+  const qRef = query(collection(db, 'appointments'), where('customerId', '==', customerId));
   const snap = await getDocs(qRef);
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 };

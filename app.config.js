@@ -67,15 +67,25 @@ export default {
 
     android: {
       package: "com.ScheduleSync.barber.one",
-      versionCode: 45,
+      versionCode: 48,
       permissions: ["INTERNET", "READ_CALENDAR", "WRITE_CALENDAR"],
     },
     ios: {
       bundleIdentifier: "com.ScheduleSync.barber",
-      buildNumber: "204",
+      buildNumber: "214",
       supportsTablet: false,
       infoPlist: {
         ITSAppUsesNonExemptEncryption: false,
+        NSPhotoLibraryUsageDescription:
+          "ScheduleSync allows barbers to upload haircut style photos and profile images so customers can view services and book appointments.",
+        NSCameraUsageDescription:
+          "ScheduleSync allows barbers to take photos of haircut styles and upload profile images for their services.",
+        NSMicrophoneUsageDescription:
+          "ScheduleSync uses the microphone for voice interaction with the AI assistant to help customers book appointments.",
+        NSCalendarsUsageDescription:
+          "ScheduleSync adds booked barber appointments to your calendar so you receive reminders before your appointment.",
+        NSRemindersUsageDescription:
+          "ScheduleSync may create reminders to notify you before a scheduled barber appointment.",
       },
     },
     runtimeVersion: "1.0.5",

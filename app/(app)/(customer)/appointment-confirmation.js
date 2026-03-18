@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -10,10 +10,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Calendar from 'expo-calendar';
-import * as Notifications from 'expo-notifications';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { useAuth } from '../../../src/contexts/AuthContext';
-import { scheduleAppointmentReminder } from '../../../src/services/notifications';
 
 // ✅ Safe JSON parsing
 const safeParse = (input) => {
@@ -54,20 +51,9 @@ function getAppointmentDate(dateStr, timeStr) {
   return new Date(`${dateStr}T${time24}`);
 }
 
-// Set the notification handler with updated properties
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true, // shows a banner when the notification is received
-    shouldShowList: true,   // shows in the notification center/list
-    shouldPlaySound: false,
-    shouldSetBadge: false,
-  }),
-});
-
 export default function AppointmentConfirmationScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const { currentUser } = useAuth();
 
   const appointment = safeParse(params.appointment);
   const barber = safeParse(params.barber);
@@ -80,48 +66,6 @@ export default function AppointmentConfirmationScreen() {
 
   const [loading, setLoading] = useState(false);
   const [calendarAdded, setCalendarAdded] = useState(false);
-  const [autoRemindersSet, setAutoRemindersSet] = useState(false);
-
-  // Automatically set up reminders when component mounts
-  useEffect(() => {
-    const setupAutomaticReminders = async () => {
-      if (!appointment || !currentUser?.uid || autoRemindersSet) {
-        console.log('⚠️ Skipping reminder setup:', { 
-          hasAppointment: !!appointment, 
-          hasUser: !!currentUser?.uid, 
-          alreadySet: autoRemindersSet 
-        });
-        return;
-      }
-      
-      try {
-        console.log('🔔 Setting up automatic reminders...', { 
-          appointment, 
-          userId: currentUser.uid,
-          appointmentId: appointment.id || appointment.appointmentId 
-        });
-        
-        // Ensure appointment has required fields
-        if (!appointment.date || !appointment.time) {
-          console.error('❌ Missing date or time in appointment:', appointment);
-          return;
-        }
-        
-        const success = await scheduleAppointmentReminder(appointment, currentUser.uid);
-        
-        if (success) {
-          setAutoRemindersSet(true);
-          console.log('✅ Automatic reminders set successfully');
-        } else {
-          console.error('❌ Failed to set reminders (returned false)');
-        }
-      } catch (error) {
-        console.error('❌ Error setting automatic reminders:', error);
-      }
-    };
-
-    setupAutomaticReminders();
-  }, [appointment, currentUser, autoRemindersSet]);
 
   const formatDate = (dateString) => {
     console.log('🔍 formatDate input:', dateString, typeof dateString);
@@ -200,16 +144,6 @@ export default function AppointmentConfirmationScreen() {
       setLoading(false);
     }
   };
-
-  const scheduleReminder = async () => {
-    // This function is now deprecated since we do automatic reminders
-    // Keeping for reference but not using
-    Alert.alert(
-      'Info', 
-      'Reminders are automatically set when you book an appointment.'
-    );
-  };
-
 
   const handleDone = () => {
     router.replace({
@@ -319,12 +253,6 @@ export default function AppointmentConfirmationScreen() {
           )}
         </TouchableOpacity>
 
-        <View style={[styles.actionButton, styles.disabledButtonGreen]}>
-          <Ionicons name="notifications" size={20} color="#fff" style={styles.actionIcon} />
-          <Text style={styles.actionButtonText}>
-            {autoRemindersSet ? 'Reminders Set' : 'Setting Reminders...'}
-          </Text>
-        </View>
       </View>
 
       <View style={{ marginHorizontal: 16, marginBottom: 16 }}>
@@ -335,11 +263,6 @@ export default function AppointmentConfirmationScreen() {
           <Text style={styles.doneButtonText}>Add Tip</Text>
         </TouchableOpacity>
       </View>
-
-      <Text style={styles.reminderInfoText}>
-        Reminders are automatically set for 24 hours and 1 hour before your appointment. 
-        
-      </Text>
 
     </ScrollView>
   );
@@ -419,11 +342,4 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   doneButtonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
-  reminderInfoText: {
-    textAlign: 'center',
-    color: '#666',
-    marginHorizontal: 16,
-    marginBottom: 24,
-    fontSize: 13,
-  },
 });

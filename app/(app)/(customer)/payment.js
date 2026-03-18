@@ -32,23 +32,8 @@ export default function PaymentScreen() {
 
   const [loading, setLoading] = useState(false);
 
-  const isWebhookConfirmed = (appointment) => {
-    const status = String(
-      appointment?.paymentStatus ||
-        appointment?.payment?.status ||
-        appointment?.latestPayment?.status ||
-        ""
-    ).toLowerCase();
-
-    return (
-      status === "paid" ||
-      status === "completed" ||
-      status === "succeeded" ||
-      !!appointment?.paidAt ||
-      !!appointment?.payment?.paidAt ||
-      !!appointment?.latestPayment?.paidAt
-    );
-  };
+  const isAppointmentPaid = (appointment) =>
+    String(appointment?.paymentStatus || "").toLowerCase() === "paid";
 
   const extractConfirmedAmount = (appointment) => {
     const dollarFields = [
@@ -93,7 +78,7 @@ export default function PaymentScreen() {
     while (Date.now() - startedAt < timeoutMs) {
       const snap = await getDoc(doc(db, "appointments", id));
       const appointment = snap.exists() ? snap.data() : null;
-      const confirmed = isWebhookConfirmed(appointment);
+      const confirmed = isAppointmentPaid(appointment);
       const confirmedAmount = extractConfirmedAmount(appointment);
 
       if (confirmed && Number.isFinite(confirmedAmount)) {
@@ -114,6 +99,14 @@ export default function PaymentScreen() {
 
       if (!appointmentId) {
         throw new Error("Missing appointment ID");
+      }
+
+      const snap = await getDoc(doc(db, "appointments", appointmentId));
+      const appointment = snap.exists() ? snap.data() : null;
+      if (isAppointmentPaid(appointment)) {
+        Alert.alert("Already Paid", "This appointment has already been paid.");
+        router.back();
+        return;
       }
 
       const result = await createAndPresentServicePaymentSheet(
@@ -160,7 +153,7 @@ export default function PaymentScreen() {
           <ActivityIndicator color="#fff" />
         ) : (
           <Text style={styles.buttonText}>
-            Pay ${amount.toFixed(2)}
+            {`Pay $${amount.toFixed(2)}`}
           </Text>
         )}
       </TouchableOpacity>

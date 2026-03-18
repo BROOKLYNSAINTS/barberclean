@@ -15,7 +15,6 @@ import {
 } from '@/services/firebase';
 import {
   addAppointmentToCalendar,
-  scheduleAppointmentReminder,
   requestPermissions
 } from '@/services/notifications';
 import * as Speech from 'expo-speech';
