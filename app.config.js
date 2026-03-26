@@ -27,7 +27,6 @@ export default {
         measurementId: process.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID,
       },
       stripePublishableKey: process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY,
-      stripeSubscriptionPriceId: process.env.EXPO_PUBLIC_STRIPE_SUBSCRIPTION_PRICE_ID,
       backendUrl: process.env.EXPO_PUBLIC_BACKEND_URL,
       // Use a private build-time env or server-side proxy for OpenAI keys.
       // Do NOT expose private keys via EXPO_PUBLIC_* variables which embed into the client.

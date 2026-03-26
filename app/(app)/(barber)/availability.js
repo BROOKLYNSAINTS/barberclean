@@ -63,25 +63,50 @@ const BarberAvailabilityScreen = () => {
     });
   };
 
-  const handleSaveAvailability = async () => {
-    try {
-      setSaving(true);
-      setError('');
-      const user = auth.currentUser;
-      if (!user) {
-        Alert.alert('Error', 'User not authenticated.');
-        return;
-      }
-      await updateUserProfile(user.uid, { unavailableDates, workingHours });
-      Alert.alert('Success', 'Availability settings saved successfully!');
-    } catch (err) {
-      console.error('Error saving availability:', err);
-      setError('Failed to save availability settings.');
-    } finally {
-      setSaving(false);
-    }
-  };
+const handleSaveAvailability = async () => {
+  try {
+    setSaving(true);
+    setError('');
 
+    const user = auth.currentUser;
+    if (!user) {
+      Alert.alert('Error', 'User not authenticated.');
+      return;
+    }
+
+    // ✅ VALIDATION
+    const start = workingHours.start;
+    const end = workingHours.end;
+
+    const [sh, sm] = start.split(':').map(Number);
+    const [eh, em] = end.split(':').map(Number);
+
+    const startMinutes = sh * 60 + sm;
+    const endMinutes = eh * 60 + em;
+
+    if (startMinutes >= endMinutes) {
+      Alert.alert(
+        'Invalid Time',
+        'Start time must be earlier than end time.'
+      );
+      setSaving(false);
+      return;
+    }
+
+    await updateUserProfile(user.uid, {
+      unavailableDates,
+      workingHours,
+    });
+
+    Alert.alert('Success', 'Availability settings saved successfully!');
+
+  } catch (err) {
+    console.error('Error saving availability:', err);
+    setError('Failed to save availability settings.');
+  } finally {
+    setSaving(false);
+  }
+};
   const handleTimeChange = (type, value) => {
     setWorkingHours((prev) => ({ ...prev, [type]: value }));
   };

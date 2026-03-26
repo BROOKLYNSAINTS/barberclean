@@ -72,13 +72,21 @@ export default function BarberTabLayout() {
           ),
         }}
       />
+        <Tabs.Screen
+        name="chat-assistant"
+        options={{
+          title: "Assistant",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="person-circle-outline" size={size} color={color} />
+          ),
+        }}
+      />
 
       {/* Hidden screens */}
 
       <Tabs.Screen name="bulletin" options={{ href: null }} />
       <Tabs.Screen name="faq" options={{ href: null }} />
       <Tabs.Screen name="chat-list" options={{ href: null }} />
-      <Tabs.Screen name="chat-assistant" options={{ href: null }} />
 
       <Tabs.Screen name="bulletin-post-details" options={{ href: null }} />
       <Tabs.Screen name="subscription" options={{ href: null }} />
@@ -88,7 +96,8 @@ export default function BarberTabLayout() {
       <Tabs.Screen name="new-chat" options={{ href: null }} />
       <Tabs.Screen name="all-appointments" options={{ href: null }} />
       <Tabs.Screen name="appointment-details" options={{ href: null }} />
-
+      <Tabs.Screen name="barber-subscription" options={{ href: null }} />
+      <Tabs.Screen name="stripe-onboarding" options={{ href: null }} />
     </Tabs>
   );
 }

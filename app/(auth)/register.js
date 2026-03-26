@@ -62,7 +62,7 @@ const RegisterScreen = () => {
       });
 
       router.push({
-        pathname: '/(auth)/profile-setup',
+        pathname: '/profile-setup',
         params: { userId, email: email.trim() },
       });
 
@@ -180,7 +180,7 @@ const RegisterScreen = () => {
           <Text>Already have an account? </Text>
 
           <TouchableOpacity
-            onPress={() => router.push('/(auth)/login')}
+            onPress={() => router.push('/login')}
           >
             <Text style={styles.link}>Login</Text>
           </TouchableOpacity>

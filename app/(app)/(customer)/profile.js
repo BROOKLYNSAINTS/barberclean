@@ -23,7 +23,7 @@ const ProfileScreen = () => {
         } else {
           setError('Profile not found. Please complete your profile setup.');
           // Optionally, redirect to profile setup if profile is incomplete
-           router.push('/(auth)/profile-setup'); 
+           router.push('/profile-setup'); 
         }
       } else {
         setError('User not authenticated.');

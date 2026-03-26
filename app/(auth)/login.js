@@ -144,7 +144,7 @@ export default function LoginWithEmail() {
         </View>
 
         <TouchableOpacity
-          onPress={() => router.push('/(auth)/forgot-password')}
+          onPress={() => router.push('/forgot-password')}
           style={styles.forgotPassword}
         >
           <Text style={styles.link}>Forgot Password?</Text>
@@ -167,7 +167,7 @@ export default function LoginWithEmail() {
           <Text>Don't have an account? </Text>
 
           <TouchableOpacity
-            onPress={() => router.push('/(auth)/register')}
+            onPress={() => router.push('/register')}
           >
             <Text style={styles.link}> Register</Text>
           </TouchableOpacity>

@@ -64,7 +64,7 @@ const ForgotPasswordScreen = () => {
       </TouchableOpacity>
       
       <View style={styles.footer}>
-        <TouchableOpacity onPress={() => router.push('/(auth)/login')}>
+        <TouchableOpacity onPress={() => router.push('/login')}>
           <Text style={styles.link}>Back to Login</Text>
         </TouchableOpacity>
       </View>
@@ -133,4 +133,3 @@ const styles = StyleSheet.create({
 });
 
 export default ForgotPasswordScreen;
-

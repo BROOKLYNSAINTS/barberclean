@@ -57,17 +57,20 @@ export default function ProfileSetupScreen() {
 
       await updateDoc(userRef, payload);
 
-      // If barber → go to subscription screen
+      // Send the user into the correct app section after setup.
       if (selectedRole === 'barber') {
 
-        router.push({
-          pathname: '/(auth)/barber-subscription',
+        router.replace({
+          pathname: '/(app)/(barber)/barber-subscription',
           params: { userId }
         });
 
       } else {
 
-        router.replace('/(app)/(customer)/');
+        router.replace({
+          pathname: '/(app)/(customer)',
+          params: { userId }
+        });
 
       }
 
