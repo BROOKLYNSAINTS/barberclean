@@ -71,7 +71,7 @@ export default {
     },
     ios: {
       bundleIdentifier: "com.ScheduleSync.barber",
-      buildNumber: "214",
+      buildNumber: "216",
       supportsTablet: false,
       infoPlist: {
         ITSAppUsesNonExemptEncryption: false,

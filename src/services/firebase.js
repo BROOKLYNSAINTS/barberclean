@@ -115,6 +115,72 @@ export const updateUserProfile = async (userId, data) => {
     throw error;
   }
 };
+// GET APPOINTMENT REVIEW
+export const getAppointmentReview = async (appointmentId) => {
+  try {
+    const reviewRef = doc(db, "appointments", appointmentId, "review", "data");
+    const snap = await getDoc(reviewRef);
+
+    if (!snap.exists()) return null;
+
+    return {
+      id: snap.id,
+      ...snap.data(),
+    };
+  } catch (error) {
+    console.error("Error fetching appointment review:", error);
+    return null;
+  }
+};
+
+// CREATE OR UPDATE BARBER REVIEW
+export const upsertBarberReview = async (barberId, reviewData) => {
+  try {
+    const reviewsRef = collection(db, "users", barberId, "reviews");
+
+    // if reviewData.id exists → update
+    if (reviewData?.id) {
+      const reviewDoc = doc(db, "users", barberId, "reviews", reviewData.id);
+
+      await updateDoc(reviewDoc, {
+        ...reviewData,
+        updatedAt: serverTimestamp(),
+      });
+
+      return reviewData.id;
+    }
+
+    // otherwise create new
+    const docRef = await addDoc(reviewsRef, {
+      ...reviewData,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+
+    return docRef.id;
+
+  } catch (error) {
+    console.error("Error saving barber review:", error);
+    throw error;
+  }
+};
+export const insertBarberReview = async (barberId, reviewData) => {
+  try {
+    const reviewsRef = collection(db, "users", barberId, "reviews");
+
+    const docRef = await addDoc(reviewsRef, {
+      ...reviewData,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+
+    return docRef.id;
+
+  } catch (error) {
+    console.error("Error inserting barber review:", error);
+    throw error;
+  }
+};
 export const getBarberReviews = async (barberId) => {
   try {
     const reviewsRef = collection(db, "users", barberId, "reviews");
@@ -131,7 +197,7 @@ export const getBarberReviews = async (barberId) => {
 };
 export const getBarberAvailability = async (barberId) => {
   try {
-    const userRef = doc(db, 'users', barberId);
+    const userRef = doc(db, "users", barberId);
     const userSnap = await getDoc(userRef);
 
     if (!userSnap.exists()) return [];
@@ -139,22 +205,39 @@ export const getBarberAvailability = async (barberId) => {
     const userData = userSnap.data();
 
     const workingHours = userData.workingHours || {
-      start: '09:00',
-      end: '17:00',
-      interval: 30
+      start: "09:00",
+      end: "17:00",
+      interval: 30,
     };
 
     const unavailableDates = userData.unavailableDates || {};
 
     const availability = [];
-
     const today = new Date();
+
+    function parseTime(timeStr) {
+      const [h, m] = timeStr.split(":").map(Number);
+      return h * 60 + m;
+    }
+
+    function formatTime(minutes) {
+      const h = Math.floor(minutes / 60);
+      const m = minutes % 60;
+
+      const date = new Date();
+      date.setHours(h, m);
+
+      return date.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    }
 
     for (let i = 0; i < 30; i++) {
       const currentDate = new Date();
       currentDate.setDate(today.getDate() + i);
 
-      const dateStr = currentDate.toISOString().split('T')[0];
+      const dateStr = currentDate.toISOString().split("T")[0];
 
       if (unavailableDates[dateStr]) continue;
 
@@ -173,10 +256,11 @@ export const getBarberAvailability = async (barberId) => {
     return availability;
 
   } catch (error) {
-    console.error('Error fetching availability:', error);
+    console.error("Error fetching availability:", error);
     return [];
   }
 };
+
 export const getBarberAppointments = async (barberId) => {
   try {
     const q = query(
@@ -197,7 +281,26 @@ export const getBarberAppointments = async (barberId) => {
   }
 };
 
-export const getCustomerAppointments = async (customerId) => {
+export const cancelAppointment = async (appointmentId) => {
+  try {
+    if (!appointmentId) {
+      throw new Error("Missing appointmentId");
+    }
+
+    const apptRef = doc(db, "appointments", appointmentId);
+
+    await updateDoc(apptRef, {
+      status: "cancelled",
+      cancelledAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error("Cancel appointment error:", error);
+    throw error;
+  }
+};export const getCustomerAppointments = async (customerId) => {
   try {
     const q = query(
       collection(db, "appointments"),
@@ -380,5 +483,20 @@ export {
   auth,
   db,
   functions,
-  onAuthStateChanged
+  onAuthStateChanged,
+  runTransaction,
+  doc,
+  getDoc,
+  getDocs,
+  collection,
+  query,
+  where,
+  setDoc,
+  addDoc,
+  serverTimestamp,
+  updateDoc,
+  deleteDoc,
+  orderBy,
+  limit,
+  Timestamp,
 };

@@ -148,93 +148,77 @@ const TipScreen = () => {
     return 0;
   };
 
-  const handleSubmitTip = async () => {
-    const tipAmount = calculateTipAmount();
-    
-    if (!Number.isFinite(tipAmount) || tipAmount <= 0) {
-      Alert.alert('Error', 'Please select or enter a valid tip amount');
-      return;
+// 🔥 ONLY THIS FUNCTION CHANGED
+
+const handleSubmitTip = async () => {
+  const tipAmount = calculateTipAmount();
+  
+  if (!Number.isFinite(tipAmount) || tipAmount <= 0) {
+    Alert.alert('Error', 'Please select or enter a valid tip amount');
+    return;
+  }
+
+  try {
+    setProcessing(true);
+
+    const userId = auth.currentUser?.uid || null;
+    const appointmentId = resolvedAppointment?.id || null;
+    const barberId = resolvedAppointment?.barberId || null;
+
+    // 🔥 BACKEND HANDLES PAYMENT — NO UI
+    const pi = await createTipPaymentSheet(
+      stripe,
+      userId,
+      tipAmount,
+      appointmentId,
+      barberId
+    );
+
+    if (!pi?.paymentIntentId) {
+      throw new Error("Payment failed");
     }
 
+    // 🔥 Record tip in Firestore
     try {
-      setProcessing(true);
-
-      const userId = auth.currentUser?.uid || null;
-      const appointmentId = resolvedAppointment?.id || null;
-      const barberId = resolvedAppointment?.barberId || null;
-
-      // Create PaymentIntent for tip
-      const pi = await createTipPaymentSheet(
-        userId,
-        tipAmount,
+      const paymentRef = await addDoc(collection(db, 'payments'), {
+        customerId: userId,
+        barberId,
         appointmentId,
-        barberId
-      );
-
-      // Initialize and present payment sheet
-      const { error: initError } = await stripe.initPaymentSheet({
-        merchantDisplayName: 'Barber Tips',
-        customerId: pi.customer,
-        customerEphemeralKeySecret: pi.ephemeralKey,
-        paymentIntentClientSecret: pi.clientSecret,
-        allowsDelayedPaymentMethods: false,
-        defaultBillingDetails: { name: 'Customer' },
-        returnURL: 'barberclean://payment-return',
+        amount: tipAmount,
+        description: 'Tip',
+        type: 'tip',
+        status: 'completed',
+        stripePaymentIntentId: pi.paymentIntentId,
+        createdAt: serverTimestamp(),
+        paymentMethod: 'card',
       });
-      if (initError) {
-        throw new Error(`Payment init failed: ${initError.message}`);
-      }
 
-      const { error: presentError } = await stripe.presentPaymentSheet();
-      if (presentError) {
-        if (presentError.code === 'Canceled') {
-          setError('Payment was canceled.');
-          return;
-        }
-        throw new Error(`Payment failed: ${presentError.message}`);
-      }
-
-      // Record tip in Firestore
-      try {
-        const paymentRef = await addDoc(collection(db, 'payments'), {
-          customerId: userId,
-          barberId,
-          appointmentId,
-          amount: tipAmount,
-          description: 'Tip',
-          type: 'tip',
-          status: 'completed',
-          stripePaymentIntentId: pi.paymentIntentId,
-          createdAt: serverTimestamp(),
-          paymentMethod: 'card',
+      if (appointmentId) {
+        const apptRef = doc(db, 'appointments', appointmentId);
+        await updateDoc(apptRef, {
+          tip: tipAmount,
+          updatedAt: serverTimestamp(),
         });
-
-        if (appointmentId) {
-          const apptRef = doc(db, 'appointments', appointmentId);
-          await updateDoc(apptRef, {
-            tip: tipAmount,
-            updatedAt: serverTimestamp(),
-          });
-        }
-        console.log('Tip recorded, paymentId:', paymentRef.id);
-      } catch (persistErr) {
-        console.warn('Tip persisted with error (non-fatal):', persistErr);
       }
 
-      Alert.alert(
-        'Tip Sent',
-        `Your $${tipAmount.toFixed(2)} tip has been sent to ${resolvedAppointment?.barberName || 'the barber'}. Thank you!`,
-        [{ text: 'OK', onPress: () => router.back() }]
-      );
-    } catch (error) {
-      console.error('Error processing tip:', error);
-      setError(error?.message || 'Failed to process tip payment');
-    } finally {
-      setProcessing(false);
+      console.log('Tip recorded, paymentId:', paymentRef.id);
+    } catch (persistErr) {
+      console.warn('Tip persisted with error (non-fatal):', persistErr);
     }
-  };
 
-  const handleSkipTip = () => {
+    Alert.alert(
+      'Tip Sent',
+      `Your $${tipAmount.toFixed(2)} tip has been sent to ${resolvedAppointment?.barberName || 'the barber'}. Thank you!`,
+      [{ text: 'OK', onPress: () => router.back() }]
+    );
+
+  } catch (error) {
+    console.error('Error processing tip:', error);
+    setError(error?.message || 'Failed to process tip payment');
+  } finally {
+    setProcessing(false);
+  }
+};  const handleSkipTip = () => {
     router.back();
   };
 

@@ -14,6 +14,7 @@ import {
   getBarberAvailability,
   createAppointment,
   getUserProfile,
+  updateUserProfile,
 } from '@/services/firebase';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
@@ -25,6 +26,29 @@ const toLocalDateString = (date) => {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+};
+
+const parseSlotDateTime = (dateString, timeString) => {
+  if (!dateString || !timeString) return null;
+
+  const match = String(timeString)
+    .trim()
+    .match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+
+  if (!match) return null;
+
+  const [, rawHour, rawMinute, meridiem] = match;
+  let hours = Number(rawHour);
+  const minutes = Number(rawMinute);
+
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) return null;
+
+  const upperMeridiem = meridiem.toUpperCase();
+  if (upperMeridiem === 'PM' && hours !== 12) hours += 12;
+  if (upperMeridiem === 'AM' && hours === 12) hours = 0;
+
+  const [year, month, day] = dateString.split('-').map(Number);
+  return new Date(year, month - 1, day, hours, minutes, 0, 0);
 };
 
 const parseRouteParam = (value) => {
@@ -100,12 +124,23 @@ export default function AppointmentBookingScreen() {
       return;
     }
 
+    const now = new Date();
+    const isToday = selectedDate === today;
+
     const slots = availabilityData
       .filter((s) => s.date === selectedDate)
-      .map((s) => s.time);
+      .map((s) => s.time)
+      .filter((time) => {
+        if (!isToday) return true;
+
+        const slotDateTime = parseSlotDateTime(selectedDate, time);
+        if (!slotDateTime) return false;
+
+        return slotDateTime > now;
+      });
 
     setAvailableSlots(slots);
-  }, [selectedDate, availabilityData]);
+  }, [selectedDate, availabilityData, today]);
 
   /* ---------------------------------------------------- */
   /* Calendar markings                                    */
@@ -165,7 +200,8 @@ export default function AppointmentBookingScreen() {
       const customerName = profile?.name || 'Customer';
       const customerEmail = profile?.email || currentUser.email || undefined;
 
-      // 🔥 SMART CARD CHECK
+      let effectiveProfile = profile;
+
       if (!profile?.defaultPaymentMethodId) {
         const setupResult = await presentSetupIntentSheet(stripe, {
           customerId: currentUser.uid,
@@ -183,10 +219,43 @@ export default function AppointmentBookingScreen() {
 
         if (!setupResult?.success) {
           const setupErrorMessage =
-            setupResult?.error?.message || 'Unable to add card. Please try again.';
+            setupResult?.error?.message ||
+            'Unable to save your card. Please try again.';
 
           console.error('SetupIntent failed:', setupResult?.error || setupResult);
           Alert.alert('Payment Setup Failed', setupErrorMessage);
+          return;
+        }
+
+        const paymentProfilePatch = {};
+
+        if (setupResult?.stripeCustomerId) {
+          paymentProfilePatch.stripeCustomerId = setupResult.stripeCustomerId;
+        }
+
+        if (setupResult?.defaultPaymentMethodId) {
+          paymentProfilePatch.defaultPaymentMethodId =
+            setupResult.defaultPaymentMethodId;
+        }
+
+        if (Object.keys(paymentProfilePatch).length > 0) {
+          await updateUserProfile(currentUser.uid, paymentProfilePatch);
+          effectiveProfile = {
+            ...profile,
+            ...paymentProfilePatch,
+          };
+        }
+
+        if (!effectiveProfile?.defaultPaymentMethodId) {
+          const refreshedProfile = await getUserProfile(currentUser.uid);
+          effectiveProfile = refreshedProfile || effectiveProfile;
+        }
+
+        if (!effectiveProfile?.defaultPaymentMethodId) {
+          Alert.alert(
+            'Payment Method Required',
+            'Your card was not saved correctly. Please try again.'
+          );
           return;
         }
       }

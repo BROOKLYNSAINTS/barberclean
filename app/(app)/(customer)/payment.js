@@ -9,11 +9,12 @@ import {
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { doc, getDoc } from "firebase/firestore";
 import {
   useStripe,
   createAndPresentServicePaymentSheet,
 } from "@/services/stripe";
-import { db, doc, getDoc } from "@/services/firebase";
+import { db } from "@/services/firebase";
 
 export default function PaymentScreen() {
   const router = useRouter();
@@ -21,6 +22,7 @@ export default function PaymentScreen() {
   const params = useLocalSearchParams();
 
   const appointmentId = params.appointmentId;
+  const barberId = params.barberId;
   const serviceName = params.serviceName || "Service";
   const barberName = params.barberName || "Barber";
   const normalizeAmount = (value) => {
@@ -111,8 +113,12 @@ export default function PaymentScreen() {
 
       const result = await createAndPresentServicePaymentSheet(
         stripe,
-        appointmentId,
-        serviceName
+        {
+          appointmentId,
+          barberId,
+          amount,
+          serviceName,
+        }
       );
 
       if (result?.canceled) {

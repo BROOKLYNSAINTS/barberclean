@@ -16,7 +16,7 @@ import {
   auth,
   getUserProfile,
   getAppointmentReview,
-  upsertBarberReview,
+  insertBarberReview,
 } from '@/services/firebase';
 
 function safeParse(input) {
@@ -58,7 +58,7 @@ export default function ReviewScreen() {
           return;
         }
 
-        const existing = await getAppointmentReview(barberId, appointmentId);
+        const existing = await getAppointmentReview(appointmentId);
         if (existing) {
           const parsedRating = Number(existing.rating);
           setRating(Number.isFinite(parsedRating) ? parsedRating : 0);
@@ -96,12 +96,11 @@ export default function ReviewScreen() {
         auth.currentUser?.displayName ||
         'Anonymous';
 
-      await upsertBarberReview({
-        barberId,
+      await insertBarberReview(barberId, {
         customerId,
         appointmentId,
         rating,
-        text: reviewText,
+        text: reviewText.trim(),
         customerName,
         serviceName,
       });
