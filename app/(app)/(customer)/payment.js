@@ -95,53 +95,82 @@ export default function PaymentScreen() {
     );
   };
 
-  const handlePay = async () => {
-    try {
-      setLoading(true);
+const handlePay = async () => {
+  try {
+    setLoading(true);
 
-      if (!appointmentId) {
-        throw new Error("Missing appointment ID");
-      }
-
-      const snap = await getDoc(doc(db, "appointments", appointmentId));
-      const appointment = snap.exists() ? snap.data() : null;
-      if (isAppointmentPaid(appointment)) {
-        Alert.alert("Already Paid", "This appointment has already been paid.");
-        router.back();
-        return;
-      }
-
-      const result = await createAndPresentServicePaymentSheet(
-        stripe,
-        {
-          appointmentId,
-          barberId,
-          amount,
-          serviceName,
-        }
-      );
-
-      if (result?.canceled) {
-        Alert.alert("Payment Canceled", "No charge was made.");
-        return;
-      }
-
-      if (!result?.success) {
-        throw new Error("Payment failed");
-      }
-
-      const confirmedAmount = await waitForWebhookConfirmation(appointmentId);
-      Alert.alert("Payment Successful", `Charged $${confirmedAmount.toFixed(2)}`);
-
-      router.back();
-
-    } catch (err) {
-      Alert.alert("Payment Error", err.message);
-    } finally {
-      setLoading(false);
+    if (!appointmentId) {
+      throw new Error("Missing appointment ID");
     }
-  };
 
+    const snap = await getDoc(doc(db, "appointments", appointmentId));
+    const appointment = snap.exists() ? snap.data() : null;
+
+    if (isAppointmentPaid(appointment)) {
+      Alert.alert("Already Paid", "This appointment has already been paid.");
+      router.back();
+      return;
+    }
+
+    const result = await createAndPresentServicePaymentSheet(
+      stripe,
+      {
+        appointmentId,
+        barberId,
+        amount,
+        serviceName,
+      }
+    );
+
+    if (result?.canceled) {
+      Alert.alert("Payment Canceled", "No charge was made.");
+      return;
+    }
+
+    if (!result?.success) {
+      throw new Error("Payment failed");
+    }
+
+    // 🔥 FIX: WAIT FOR WEBHOOK SAFELY (NO FALSE FAILURE)
+    let attempts = 0;
+    let confirmedAmount = null;
+
+    while (attempts < 10) {
+      await new Promise(r => setTimeout(r, 1000));
+
+      const updatedSnap = await getDoc(doc(db, "appointments", appointmentId));
+      const updated = updatedSnap.exists() ? updatedSnap.data() : null;
+
+      if (updated?.paymentStatus === "paid") {
+        confirmedAmount = updated.servicePrice || amount;
+        break;
+      }
+
+      attempts++;
+    }
+
+    if (!confirmedAmount) {
+      Alert.alert(
+        "Payment Processing",
+        "Payment succeeded. Final confirmation may take a moment."
+      );
+      router.back();
+      return;
+    }
+
+    Alert.alert(
+      "Payment Successful",
+      `Charged $${confirmedAmount.toFixed(2)}`
+    );
+
+    router.back();
+
+  } catch (err) {
+    Alert.alert("Payment Error", err.message);
+  } finally {
+    setLoading(false);
+  }
+};
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.card}>

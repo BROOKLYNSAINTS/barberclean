@@ -405,11 +405,10 @@ export const getBarbersByZipcode = async (zipcode) => {
     return [];
   }
 };
-/* =========================================================
-   CREATE APPOINTMENT (🔥 FIXED — NO STRIPE REQUIRED)
-========================================================= */
-
 export async function createAppointment(data) {
+  console.log('BOOKING DATA:', data);
+  console.log('DATE:', data.date, 'TIME:', data.time);
+
   try {
     if (!data?.barberId || !data?.date || !data?.time || !data?.customerId) {
       throw new Error('Missing required appointment fields.');
@@ -419,15 +418,11 @@ export async function createAppointment(data) {
 
     return await runTransaction(db, async (transaction) => {
 
-      // 🔥 CUSTOMER
       const customerRef = doc(db, 'users', data.customerId);
       const customerSnap = await transaction.get(customerRef);
       if (!customerSnap.exists()) throw new Error('Customer not found');
       const customer = customerSnap.data() || {};
 
-      // ❌ REMOVED STRIPE REQUIREMENT COMPLETELY
-
-      // 🔥 BARBER
       const barberRef = doc(db, 'users', data.barberId);
       const barberSnap = await transaction.get(barberRef);
       if (!barberSnap.exists()) throw new Error('Barber not found');
@@ -435,30 +430,76 @@ export async function createAppointment(data) {
 
       const barberTwilioNumber =
         barber.twilioNumber || barber.twilioPhoneNumber || null;
+      if (!barberTwilioNumber) throw new Error('Barber missing Twilio number');
 
-      if (!barberTwilioNumber) {
-        throw new Error('Barber missing Twilio number');
+      // ✅ NORMALIZE PHONE FOR TWILIO (E.164)
+      function normalizePhone(phone) {
+        if (!phone) return null;
+
+        let digits = String(phone).replace(/\D/g, '');
+
+        if (digits.length === 10) {
+          return `+1${digits}`;
+        }
+
+        if (digits.length === 11 && digits.startsWith('1')) {
+          return `+${digits}`;
+        }
+
+        if (phone.startsWith('+')) {
+          return phone;
+        }
+
+        return null;
       }
 
-      const customerPhone = data.customerPhone || customer.phone || null;
+      const rawCustomerPhone = data.customerPhone || customer.phone || null;
+      const customerPhone = normalizePhone(rawCustomerPhone);
 
       if (!customerPhone) {
-        throw new Error('Customer missing phone');
+        throw new Error('Customer phone invalid or missing');
       }
 
       const now = Timestamp.now();
 
+      // ✅ CLEAN TIME STRING (removes hidden Unicode spaces)
+      const cleanTime = data.time.replace(/\u202F/g, ' ').trim();
+
+      let hours = 0;
+      let minutes = 0;
+
+      if (cleanTime.includes('AM') || cleanTime.includes('PM')) {
+        const [timePart, modifier] = cleanTime.split(' ');
+        let [h, m] = timePart.split(':').map(Number);
+
+        if (modifier === 'PM' && h !== 12) h += 12;
+        if (modifier === 'AM' && h === 12) h = 0;
+
+        hours = h;
+        minutes = m;
+      } else {
+        [hours, minutes] = cleanTime.split(':').map(Number);
+      }
+
+      const [year, month, day] = data.date.split('-').map(Number);
+
+      const startAt = new Date(year, month - 1, day, hours, minutes);
+
+      if (isNaN(startAt.getTime())) {
+        throw new Error('Invalid startAt date');
+      }
+
       const appointmentData = {
         ...data,
-
+        serviceId: data.serviceId || 'default',
+        startAt,
         barberTwilioNumber,
-        customerPhone,
-
-        // ❌ NO STRIPE DATA
-
+        customerPhone, // ✅ now always E.164
+        customerStripeId: customer?.stripeCustomerId || null,
+        customerStripePaymentMethodId: customer?.defaultPaymentMethodId || null,
+        barberStripeAccountId: barber?.stripeConnectAccountId || null,
         paymentStatus: 'unpaid',
         status: 'confirmed',
-
         createdAt: now,
         updatedAt: now,
       };
@@ -472,9 +513,7 @@ export async function createAppointment(data) {
     console.error('❌ Failed to create appointment:', err);
     throw err;
   }
-}
-
-/* =========================================================
+}/*=========================================================
    EXPORTS
 ========================================================= */
 

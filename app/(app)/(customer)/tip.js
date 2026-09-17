@@ -6,7 +6,6 @@ import { auth, getUserProfile, getCustomerAppointments, db } from '@/services/fi
 import { collection, addDoc, serverTimestamp, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 
-
 const TipScreen = () => {
   const router = useRouter();
   const params = useLocalSearchParams();
@@ -24,16 +23,16 @@ const TipScreen = () => {
   const appointment = safeParse(params.appointment);
   const [resolvedAppointment, setResolvedAppointment] = useState(appointment || null);
   const appointmentIdParam = params?.appointmentId ? String(params.appointmentId) : null;
-  
+
   const [loading, setLoading] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState('');
-  
+
   // Tip options
   const [selectedTip, setSelectedTip] = useState(null);
   const [customTip, setCustomTip] = useState('');
   const [paymentMethod, setPaymentMethod] = useState(null);
-  
+
   const tipOptions = [
     { percent: 15, label: '15%' },
     { percent: 20, label: '20%' },
@@ -60,10 +59,6 @@ const TipScreen = () => {
   }, []);
 
   useEffect(() => {
-    // Priority:
-    // 1) appointment passed via params
-    // 2) explicit appointmentId param fetch
-    // 3) fallback to latest non-cancelled appointment only when no explicit selection was passed
     const loadAppointment = async () => {
       try {
         if (resolvedAppointment) return;
@@ -85,8 +80,8 @@ const TipScreen = () => {
           const candidates = appts.filter((a) => a && a.status !== 'cancelled');
           candidates.sort((a, b) => {
             const da = new Date(`${a.date}T${a.time}`);
-            const db = new Date(`${b.date}T${b.time}`);
-            return db - da; // latest first
+            const dbDate = new Date(`${b.date}T${b.time}`);
+            return dbDate - da;
           });
           if (candidates[0]) setResolvedAppointment(candidates[0]);
         }
@@ -94,27 +89,27 @@ const TipScreen = () => {
         console.warn('Failed to load fallback appointment for tip:', e);
       }
     };
+
     loadAppointment();
   }, [resolvedAppointment, appointmentIdParam]);
 
   const fetchPaymentMethods = async () => {
     try {
       setLoading(true);
-      
+
       const user = auth.currentUser;
       if (user?.uid) {
         await getUserProfile(user.uid);
       }
-      
-      // In a real app, you would fetch saved payment methods
-      // For this demo, we'll use a placeholder
+
+      // Placeholder display card for UI.
       setPaymentMethod({
         id: 'pm_mock',
         brand: 'visa',
         last4: '4242',
       });
-    } catch (error) {
-      console.error('Error fetching payment methods:', error);
+    } catch (fetchError) {
+      console.error('Error fetching payment methods:', fetchError);
       setError('Failed to load payment information');
     } finally {
       setLoading(false);
@@ -136,23 +131,21 @@ const TipScreen = () => {
     const servicePrice = normalizeCurrencyValue(
       appt?.servicePrice ?? appt?.price ?? 0
     );
-    
+
     if (selectedTip) {
       return (servicePrice * selectedTip.percent) / 100;
     }
-    
+
     if (customTip) {
       return normalizeCurrencyValue(customTip);
     }
-    
+
     return 0;
   };
 
-// 🔥 ONLY THIS FUNCTION CHANGED
-
 const handleSubmitTip = async () => {
   const tipAmount = calculateTipAmount();
-  
+
   if (!Number.isFinite(tipAmount) || tipAmount <= 0) {
     Alert.alert('Error', 'Please select or enter a valid tip amount');
     return;
@@ -160,25 +153,50 @@ const handleSubmitTip = async () => {
 
   try {
     setProcessing(true);
+    setError('');
 
     const userId = auth.currentUser?.uid || null;
     const appointmentId = resolvedAppointment?.id || null;
     const barberId = resolvedAppointment?.barberId || null;
 
-    // 🔥 BACKEND HANDLES PAYMENT — NO UI
-    const pi = await createTipPaymentSheet(
-      stripe,
-      userId,
-      tipAmount,
-      appointmentId,
-      barberId
-    );
-
-    if (!pi?.paymentIntentId) {
-      throw new Error("Payment failed");
+    if (!appointmentId) {
+      throw new Error('Missing appointment');
     }
 
-    // 🔥 Record tip in Firestore
+    const result = await createTipPaymentSheet(
+      stripe,
+      appointmentId,
+      tipAmount
+    );
+
+    if (result?.canceled) {
+      Alert.alert("Payment Canceled", "No charge was made.");
+      return;
+    }
+
+    if (!result?.success) {
+      throw new Error(result?.error?.message || 'Payment failed');
+    }
+
+    // 🔥 FIX: WAIT FOR WEBHOOK (SAFE — NO FALSE ERROR)
+    let attempts = 0;
+    let confirmed = false;
+
+    while (attempts < 10) {
+      await new Promise(r => setTimeout(r, 1000));
+
+      const snap = await getDoc(doc(db, "appointments", appointmentId));
+      const updated = snap.exists() ? snap.data() : null;
+
+      if (updated?.tip && updated.tip >= tipAmount) {
+        confirmed = true;
+        break;
+      }
+
+      attempts++;
+    }
+
+    // 🔥 RECORD PAYMENT (NON-BLOCKING)
     try {
       const paymentRef = await addDoc(collection(db, 'payments'), {
         customerId: userId,
@@ -188,7 +206,7 @@ const handleSubmitTip = async () => {
         description: 'Tip',
         type: 'tip',
         status: 'completed',
-        stripePaymentIntentId: pi.paymentIntentId,
+        stripePaymentIntentId: result?.paymentIntentId || null,
         createdAt: serverTimestamp(),
         paymentMethod: 'card',
       });
@@ -206,19 +224,31 @@ const handleSubmitTip = async () => {
       console.warn('Tip persisted with error (non-fatal):', persistErr);
     }
 
+    if (!confirmed) {
+      Alert.alert(
+        "Tip Processing",
+        "Payment succeeded. Final confirmation may take a moment."
+      );
+      router.back();
+      return;
+    }
+
     Alert.alert(
       'Tip Sent',
-      `Your $${tipAmount.toFixed(2)} tip has been sent to ${resolvedAppointment?.barberName || 'the barber'}. Thank you!`,
+      `Your $${tipAmount.toFixed(2)} tip has been sent to ${
+        resolvedAppointment?.barberName || 'the barber'
+      }. Thank you!`,
       [{ text: 'OK', onPress: () => router.back() }]
     );
 
-  } catch (error) {
-    console.error('Error processing tip:', error);
-    setError(error?.message || 'Failed to process tip payment');
+  } catch (submitError) {
+    console.error('Error processing tip:', submitError);
+    setError(submitError?.message || 'Failed to process tip payment');
   } finally {
     setProcessing(false);
   }
-};  const handleSkipTip = () => {
+};
+  const handleSkipTip = () => {
     router.back();
   };
 
@@ -258,17 +288,17 @@ const handleSubmitTip = async () => {
 
       <View style={styles.appointmentCard}>
         <Text style={styles.cardTitle}>Appointment Details</Text>
-        
+
         <View style={styles.detailRow}>
           <Text style={styles.detailLabel}>Barber:</Text>
           <Text style={styles.detailValue}>{resolvedAppointment.barberName}</Text>
         </View>
-        
+
         <View style={styles.detailRow}>
           <Text style={styles.detailLabel}>Service:</Text>
           <Text style={styles.detailValue}>{resolvedAppointment.serviceName}</Text>
         </View>
-        
+
         <View style={styles.detailRow}>
           <Text style={styles.detailLabel}>Price:</Text>
           <Text style={styles.detailValue}>${safeNumber(resolvedAppointment.servicePrice).toFixed(2)}</Text>
@@ -277,7 +307,7 @@ const handleSubmitTip = async () => {
 
       <View style={styles.tipSection}>
         <Text style={styles.sectionTitle}>Select Tip Amount</Text>
-        
+
         <View style={styles.tipOptionsContainer}>
           {tipOptions.map((option) => (
             <TouchableOpacity
@@ -303,7 +333,7 @@ const handleSubmitTip = async () => {
             </TouchableOpacity>
           ))}
         </View>
-        
+
         <View style={styles.customTipContainer}>
           <Text style={styles.customTipLabel}>Custom Amount:</Text>
           <View style={styles.customTipInputContainer}>
@@ -321,7 +351,7 @@ const handleSubmitTip = async () => {
 
       <View style={styles.paymentSection}>
         <Text style={styles.sectionTitle}>Payment Method</Text>
-        
+
         {paymentMethod ? (
           <View style={styles.paymentMethodCard}>
             <Ionicons name={paymentMethod.brand === 'visa' ? 'card' : 'card-outline'} size={24} color="#2196F3" />
@@ -343,14 +373,14 @@ const handleSubmitTip = async () => {
       </View>
 
       <View style={styles.actionButtons}>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.skipButton}
           onPress={handleSkipTip}
         >
           <Text style={styles.skipButtonText}>Skip</Text>
         </TouchableOpacity>
-        
-        <TouchableOpacity 
+
+        <TouchableOpacity
           style={[
             styles.submitButton,
             (calculateTipAmount() <= 0 || processing || !paymentMethod) && styles.disabledButton
@@ -386,7 +416,7 @@ const styles = StyleSheet.create({
     color: '#666',
   },
   header: {
-    paddingTop: 48, // or 56 for even lower
+    paddingTop: 48,
     paddingBottom: 20,
     paddingHorizontal: 20,
     backgroundColor: '#f5f5f5',

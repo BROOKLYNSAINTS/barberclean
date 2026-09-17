@@ -1,45 +1,48 @@
 import "dotenv/config";
-console.log("BUILD-TIME has OPENAI_API_KEY:", !!process.env.OPENAI_API_KEY);
-console.log("BUILD-TIME OPENAI_API_KEY length:", (process.env.OPENAI_API_KEY || "").length);
-const androidIntentUrl =
-  'intent://dashboard?stripeConnectComplete=true#Intent;scheme=barberclean;package=com.ScheduleSync.barber.one;end';
+
 export default {
   expo: {
     name: "barber-clean",
     slug: "barberclean",
-    version: "1.0.1",
+    version: "1.0.3",
     scheme: "barberclean",
     orientation: "portrait",
     icon: "./assets/icon512.png",
     userInterfaceStyle: "light",
     newArchEnabled: true,
+
     extra: {
       eas: {
         projectId: "83f06aa9-0a00-4fc3-8d84-e1ac8b51c5ef",
       },
+
       firebase: {
         apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
         authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
         projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
-        storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
-        messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+        storageBucket:
+          process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
+        messagingSenderId:
+          process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
         appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
-        measurementId: process.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID,
+        measurementId:
+          process.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID,
       },
-      stripePublishableKey: process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY,
-      backendUrl: process.env.EXPO_PUBLIC_BACKEND_URL,
-      // Use a private build-time env or server-side proxy for OpenAI keys.
-      // Do NOT expose private keys via EXPO_PUBLIC_* variables which embed into the client.
-      // Support a fallback secret name so we can create a new secret without deleting the old one.
-      OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+
+      stripePublishableKey:
+        process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY,
+
+      backendUrl:
+        process.env.EXPO_PUBLIC_BACKEND_URL,
     },
 
-    infoPlist: {
-      ITSAppUsesNonExemptEncryption: false,
+    experiments: {
+      tsconfigPaths: true,
     },
-    experiments: { tsconfigPaths: true },
+
     plugins: [
       "expo-router",
+
       [
         "@stripe/stripe-react-native",
         {
@@ -47,6 +50,7 @@ export default {
           enableGooglePay: true,
         },
       ],
+
       [
         "expo-notifications",
         {
@@ -55,39 +59,53 @@ export default {
           sounds: [],
         },
       ],
+
       [
         "expo-calendar",
         {
-          calendarPermission: "The app needs to access your calendar to schedule appointment reminders.",
+          calendarPermission:
+            "The app needs to access your calendar to schedule appointment reminders.",
         },
       ],
-
     ],
 
     android: {
       package: "com.ScheduleSync.barber.one",
-      versionCode: 48,
-      permissions: ["INTERNET", "READ_CALENDAR", "WRITE_CALENDAR"],
+
+      permissions: [
+        "INTERNET",
+        "READ_CALENDAR",
+        "WRITE_CALENDAR",
+      ],
     },
+
     ios: {
       bundleIdentifier: "com.ScheduleSync.barber",
-      buildNumber: "216",
+      buildNumber: "258",
       supportsTablet: false,
+
       infoPlist: {
         ITSAppUsesNonExemptEncryption: false,
+
         NSPhotoLibraryUsageDescription:
           "ScheduleSync allows barbers to upload haircut style photos and profile images so customers can view services and book appointments.",
+
         NSCameraUsageDescription:
           "ScheduleSync allows barbers to take photos of haircut styles and upload profile images for their services.",
+
         NSMicrophoneUsageDescription:
           "ScheduleSync uses the microphone for voice interaction with the AI assistant to help customers book appointments.",
+
         NSCalendarsUsageDescription:
           "ScheduleSync adds booked barber appointments to your calendar so you receive reminders before your appointment.",
+
         NSRemindersUsageDescription:
           "ScheduleSync may create reminders to notify you before a scheduled barber appointment.",
       },
     },
+
     runtimeVersion: "1.0.5",
+
     updates: {
       enabled: false,
       checkAutomatically: "NEVER",

@@ -1,27 +1,48 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator } from "react-native";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  ActivityIndicator,
+  Platform,
+} from "react-native";
+
 import { Ionicons } from "@expo/vector-icons";
-import { getUserProfile, auth } from "@/services/firebase";
+import { auth } from "@/services/firebase";
 import { useRouter, useFocusEffect } from "expo-router";
+
 import theme from "@/styles/theme";
-import { ScreenContainer, ScreenHeader } from "@/components/LayoutComponents";
+import {
+  ScreenContainer,
+  ScreenHeader,
+} from "@/components/LayoutComponents";
+
 import { Button, Card } from "@/components/UIComponents";
 
+import { getCustomerInfo } from "@/services/revenuecat";
+
 const SubscriptionPaymentScreen = () => {
+
   const router = useRouter();
 
-  const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
-
   const [subscriptionActive, setSubscriptionActive] = useState(false);
 
+  const ENTITLEMENT_ID =
+    Platform.OS === "ios"
+      ? "barber_clean_pro"
+      : "barber-clean Pro";
+
   /**
-   * 🔥 LOAD PROFILE (REVENUECAT VERSION)
+   * 🔥 CHECK REVENUECAT SUBSCRIPTION
    */
-  const fetchProfileData = useCallback(async () => {
+  const checkSubscription = useCallback(async () => {
+
     setLoading(true);
 
     try {
+
       const user = auth.currentUser;
 
       if (!user) {
@@ -29,36 +50,48 @@ const SubscriptionPaymentScreen = () => {
         return;
       }
 
-      const userProfile = await getUserProfile(user.uid);
+      const customerInfo = await getCustomerInfo();
 
-      setProfile(userProfile);
+      const isActive =
+        customerInfo?.entitlements?.active[ENTITLEMENT_ID];
 
-      // ✅ NEW: check RevenueCat-based subscription
-      setSubscriptionActive(userProfile?.subscription?.status === "active");
+      setSubscriptionActive(!!isActive);
 
     } catch (err) {
-      console.error("Error fetching profile:", err);
+
+      console.error("Error checking subscription:", err);
+
     } finally {
+
       setLoading(false);
+
     }
 
   }, [router]);
 
   useFocusEffect(
     useCallback(() => {
-      fetchProfileData();
-    }, [fetchProfileData])
+      checkSubscription();
+    }, [checkSubscription])
   );
 
   /**
    * 🔥 LOADING
    */
   if (loading) {
+
     return (
       <ScreenContainer>
-        <ScreenHeader title="Subscription" leftAction={() => router.back()} />
+        <ScreenHeader
+          title="Subscription"
+          leftAction={() => router.back()}
+        />
+
         <View style={styles.centered}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
+          <ActivityIndicator
+            size="large"
+            color={theme.colors.primary}
+          />
         </View>
       </ScreenContainer>
     );
@@ -68,23 +101,40 @@ const SubscriptionPaymentScreen = () => {
    * 🔥 UI
    */
   return (
-    <ScreenContainer>
-      <ScreenHeader title="My Subscription" leftAction={() => router.back()} />
 
-      <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
+    <ScreenContainer>
+
+      <ScreenHeader
+        title="My Subscription"
+        leftAction={() => router.back()}
+      />
+
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.contentContainer}
+      >
 
         {subscriptionActive ? (
 
           <Card style={styles.card}>
 
             <View style={styles.statusContainer_active}>
-              <Ionicons name="checkmark-circle" size={28} color={theme.colors.success} />
-              <Text style={styles.statusText_active}>Subscription Active</Text>
+              <Ionicons
+                name="checkmark-circle"
+                size={28}
+                color={theme.colors.success}
+              />
+
+              <Text style={styles.statusText_active}>
+                Subscription Active
+              </Text>
             </View>
 
             <Button
               title="Continue"
-              onPress={() => router.replace("/(app)/(barber)/dashboard")}
+              onPress={() =>
+                router.replace("/(app)/(barber)/dashboard")
+              }
               style={styles.subscribeButton}
             />
 
@@ -95,8 +145,17 @@ const SubscriptionPaymentScreen = () => {
           <Card style={styles.card}>
 
             <View style={styles.statusContainer_inactive}>
-              <Ionicons name="alert-circle" size={28} color={theme.colors.warning} />
-              <Text style={styles.statusText_inactive}>Subscription Required</Text>
+
+              <Ionicons
+                name="alert-circle"
+                size={28}
+                color={theme.colors.warning}
+              />
+
+              <Text style={styles.statusText_inactive}>
+                Subscription Required
+              </Text>
+
             </View>
 
             <Text style={styles.planDetailsText}>
@@ -105,7 +164,9 @@ const SubscriptionPaymentScreen = () => {
 
             <Button
               title="Go to Subscription"
-              onPress={() => router.replace("/(app)/(barber)/barber-subscription")}
+              onPress={() =>
+                router.replace("/(app)/(barber)/barber-subscription")
+              }
               style={styles.subscribeButton}
             />
 
@@ -114,25 +175,31 @@ const SubscriptionPaymentScreen = () => {
         )}
 
       </ScrollView>
+
     </ScreenContainer>
   );
 };
 
 const styles = StyleSheet.create({
+
   container: {
     flex: 1,
   },
+
   contentContainer: {
     padding: theme.spacing.regular,
   },
+
   centered: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
   },
+
   card: {
     padding: theme.spacing.medium,
   },
+
   statusContainer_active: {
     flexDirection: "row",
     alignItems: "center",
@@ -142,12 +209,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: theme.spacing.medium,
     borderRadius: theme.borderRadius.medium,
   },
+
   statusText_active: {
     fontSize: theme.typography.fontSize.large,
     fontWeight: "bold",
     color: theme.colors.success,
     marginLeft: theme.spacing.small,
   },
+
   statusContainer_inactive: {
     flexDirection: "row",
     alignItems: "center",
@@ -157,21 +226,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: theme.spacing.medium,
     borderRadius: theme.borderRadius.medium,
   },
+
   statusText_inactive: {
     fontSize: theme.typography.fontSize.large,
     fontWeight: "bold",
     color: theme.colors.warning,
     marginLeft: theme.spacing.small,
   },
+
   planDetailsText: {
     fontSize: theme.typography.fontSize.medium,
     color: theme.colors.textSecondary,
     textAlign: "center",
     marginBottom: theme.spacing.large,
   },
+
   subscribeButton: {
     marginTop: theme.spacing.medium,
   },
+
 });
 
 export default SubscriptionPaymentScreen;

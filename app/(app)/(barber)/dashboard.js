@@ -21,14 +21,46 @@ import { signOut } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 
 function isToday(appt) {
-  const now = new Date();
-  return appt.date === now.toISOString().slice(0, 10);
+  const today = new Date();
+  const localToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+  const [year, month, day] = appt.date.split('-').map(Number);
+  const apptDate = new Date(year, month - 1, day);
+
+  return apptDate.getTime() === localToday.getTime();
+}
+
+function parseAppointmentDate(appt) {
+  if (!appt?.date || !appt?.time) return null;
+
+  try {
+    const cleanTime = String(appt.time).replace(/\s+/g, ' ').trim();
+    const [time, modifier] = cleanTime.split(' ');
+    if (!time || !modifier) return null;
+
+    let [hours, minutes] = time.split(':').map(Number);
+
+    const mod = modifier.toUpperCase();
+
+    if (mod === 'PM' && hours !== 12) hours += 12;
+    if (mod === 'AM' && hours === 12) hours = 0;
+
+    const [year, month, day] = appt.date.split('-').map(Number);
+
+    return new Date(year, month - 1, day, hours, minutes);
+  } catch {
+    return null;
+  }
 }
 
 function isUpcoming(appt) {
-  const time = appt.time || '00:00';
-  const d = new Date(`${appt.date}T${time}:00`);
-  return d >= new Date();
+  const apptDate = parseAppointmentDate(appt);
+  if (!apptDate) return false;
+
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+  return apptDate > startOfToday;
 }
 
 export default function BarberDashboardScreen() {
@@ -40,9 +72,6 @@ export default function BarberDashboardScreen() {
   const [loading, setLoading] = useState(true);
   const [checkingAccess, setCheckingAccess] = useState(true);
 
-  /**
-   * 🔥 ACCESS CONTROL (UPDATED FOR REVENUECAT)
-   */
   useEffect(() => {
     const verifyAccess = async () => {
       try {
@@ -57,23 +86,15 @@ export default function BarberDashboardScreen() {
         const snapshot = await getDoc(userRef);
         const data = snapshot.data();
 
-        console.log("🔥 USER DATA:", data);
-
-        // ✅ Stripe onboarding check
         if (!data?.stripeConnectOnboardingComplete) {
-          console.log("🚫 Stripe onboarding NOT complete");
           router.replace('/(app)/(barber)/stripe-onboarding');
           return;
         }
 
-        // ✅ NEW: RevenueCat subscription check
         if (data?.subscription?.status !== "active") {
-          console.log("🚫 No active subscription — redirecting");
           router.replace('/(app)/(barber)/barber-subscription');
           return;
         }
-
-        console.log("✅ ACCESS GRANTED");
 
       } catch (error) {
         console.log("Access check failed:", error);
@@ -85,9 +106,6 @@ export default function BarberDashboardScreen() {
     verifyAccess();
   }, [router]);
 
-  /**
-   * 🔥 LOAD DATA
-   */
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
@@ -114,24 +132,56 @@ export default function BarberDashboardScreen() {
     }, [fetchData])
   );
 
-  /**
-   * 🔥 STATS
-   */
   const todayCount = useMemo(
     () => appointments.filter(isToday).length,
     [appointments]
   );
 
   const upcomingCount = useMemo(
-    () => appointments.filter((a) => isUpcoming(a)).length,
+    () => appointments.filter((a) => isUpcoming(a) && !isToday(a)).length,
     [appointments]
   );
 
   const totalBooked = appointments.length;
 
-  /**
-   * 🔥 LOGOUT
-   */
+  const todayAppointments = useMemo(
+    () => appointments.filter(isToday),
+    [appointments]
+  );
+
+  const upcomingAppointments = useMemo(
+    () => appointments.filter((a) => isUpcoming(a) && !isToday(a)),
+    [appointments]
+  );
+
+  const displayAppointments = useMemo(() => {
+    if (todayAppointments.length > 0) return todayAppointments;
+    return upcomingAppointments;
+  }, [todayAppointments, upcomingAppointments]);
+
+  const totalRevenue = useMemo(() => {
+    return appointments.reduce((sum, appt) => {
+      if (appt.paymentStatus !== "paid") return sum;
+
+      const service = Number(appt.servicePrice || 0);
+      const tip = Number(appt.tipAmountPaid || 0);
+
+      return sum + service + tip;
+    }, 0);
+  }, [appointments]);
+
+  const todayRevenue = useMemo(() => {
+    return appointments.reduce((sum, appt) => {
+      if (appt.paymentStatus !== "paid") return sum;
+      if (!isToday(appt)) return sum;
+
+      const service = Number(appt.servicePrice || 0);
+      const tip = Number(appt.tipAmountPaid || 0);
+
+      return sum + service + tip;
+    }, 0);
+  }, [appointments]);
+
   const handleLogout = () => {
     Alert.alert('Logout?', '', [
       { text: 'Cancel', style: 'cancel' },
@@ -146,9 +196,6 @@ export default function BarberDashboardScreen() {
     ]);
   };
 
-  /**
-   * 🔥 LOADING STATE
-   */
   if (loading || checkingAccess) {
     return (
       <SafeAreaView style={styles.centered}>
@@ -158,9 +205,6 @@ export default function BarberDashboardScreen() {
     );
   }
 
-  /**
-   * 🔥 SAFETY FALLBACK
-   */
   if (!profile) {
     return (
       <SafeAreaView style={styles.centered}>
@@ -169,15 +213,11 @@ export default function BarberDashboardScreen() {
     );
   }
 
-  /**
-   * 🔥 MAIN UI
-   */
   return (
     <SafeAreaView style={styles.container}>
       <FlatList
-        data={appointments}
+        data={displayAppointments}
         keyExtractor={(item) => item.id}
-
         renderItem={({ item }) => (
           <TouchableOpacity style={styles.apptCard}>
             <View>
@@ -190,52 +230,66 @@ export default function BarberDashboardScreen() {
             <Ionicons name="chevron-forward" size={18} />
           </TouchableOpacity>
         )}
-
         ListHeaderComponent={
           <View>
-
             <View style={styles.header}>
               <Text style={styles.welcome}>
                 Welcome, {profile?.name || "Barber"}
               </Text>
 
               <TouchableOpacity onPress={handleLogout}>
-                <Ionicons
-                  name="log-out-outline"
-                  size={20}
-                  color="#f44336"
-                />
+                <Ionicons name="log-out-outline" size={20} color="#f44336" />
               </TouchableOpacity>
             </View>
 
             <View style={styles.statsRow}>
-
-              <View style={styles.statBox}>
+              <TouchableOpacity
+                style={styles.statBox}
+                onPress={() => router.push('/(app)/(barber)/all-appointments?filter=today')}
+              >
                 <Text style={styles.statNumber}>{todayCount}</Text>
                 <Text style={styles.statLabel}>Today</Text>
-              </View>
+              </TouchableOpacity>
 
-              <View style={styles.statBox}>
+              <TouchableOpacity
+                style={styles.statBox}
+                onPress={() => router.push('/(app)/(barber)/all-appointments?filter=upcoming')}
+              >
                 <Text style={styles.statNumber}>{upcomingCount}</Text>
                 <Text style={styles.statLabel}>Upcoming</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.statBox}
+                onPress={() => router.push('/(app)/(barber)/all-appointments')}
+              >
+                <Text style={styles.statNumber}>{totalBooked}</Text>
+                <Text style={styles.statLabel}>Total</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.statsRow}>
+              <View style={styles.statBox}>
+                <Text style={styles.statNumber}>
+                  ${todayRevenue.toFixed(2)}
+                </Text>
+                <Text style={styles.statLabel}>Today $</Text>
               </View>
 
               <View style={styles.statBox}>
-                <Text style={styles.statNumber}>{totalBooked}</Text>
-                <Text style={styles.statLabel}>Total</Text>
+                <Text style={styles.statNumber}>
+                  ${totalRevenue.toFixed(2)}
+                </Text>
+                <Text style={styles.statLabel}>Total $</Text>
               </View>
-
             </View>
-
           </View>
         }
-
         ListEmptyComponent={
           <Text style={{ textAlign: 'center', marginTop: 20 }}>
             No appointments yet
           </Text>
         }
-
         contentContainerStyle={{ paddingBottom: 30 }}
       />
     </SafeAreaView>

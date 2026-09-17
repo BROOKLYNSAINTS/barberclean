@@ -45,9 +45,28 @@ export default function ProfileSetupScreen() {
 
       const userRef = doc(db, 'users', userId);
 
+const formatToE164 = (phone) => {
+  const digits = phone.replace(/\D/g, "");
+
+  if (digits.length !== 10) {
+    throw new Error("Enter a valid 10-digit phone number");
+  }
+
+  return `+1${digits}`;
+};
+
+let formattedPhone;
+
+try {
+  formattedPhone = formatToE164(phone);
+} catch (err) {
+  setError(err.message);
+  setLoading(false);
+  return;
+}
       const payload = {
         name,
-        phone,
+        phone: formattedPhone,       
         address,
         zipcode,
         role: selectedRole,

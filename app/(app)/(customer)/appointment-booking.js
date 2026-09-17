@@ -169,10 +169,10 @@ export default function AppointmentBookingScreen() {
     }
 
     return marks;
-  }, [openDates, selectedDate]);
+  }, [openDates, selectedDate, today, maxDate]);
 
   /* ---------------------------------------------------- */
-  /* BOOK APPOINTMENT (SMART CARD CHECK ADDED)           */
+  /* BOOK APPOINTMENT                                     */
   /* ---------------------------------------------------- */
   const handleBookAppointment = async () => {
     if (!currentUser || !barber || !service) {
@@ -202,7 +202,12 @@ export default function AppointmentBookingScreen() {
 
       let effectiveProfile = profile;
 
-      if (!profile?.defaultPaymentMethodId) {
+      const hasCard = !!profile?.defaultPaymentMethodId;
+
+      // TEMP: set to true so you can force card update while testing
+      const forceUpdateCard = true;
+
+      if (!hasCard || forceUpdateCard) {
         const setupResult = await presentSetupIntentSheet(stripe, {
           customerId: currentUser.uid,
           customerName,

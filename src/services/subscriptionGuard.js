@@ -1,3 +1,4 @@
+import { Platform } from "react-native";
 import { getCustomerInfo } from "@/services/revenuecat";
 
 export const checkSubscriptionAccess = async () => {
@@ -5,8 +6,13 @@ export const checkSubscriptionAccess = async () => {
 
     const info = await getCustomerInfo();
 
+    const ENTITLEMENT_ID =
+      Platform.OS === "ios"
+        ? "barber_clean_pro"
+        : "barber-clean Pro";
+
     if (
-      info?.entitlements?.active["barber-clean Pro"]
+      info?.entitlements?.active[ENTITLEMENT_ID]
     ) {
       return true;
     }

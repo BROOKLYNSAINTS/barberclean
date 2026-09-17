@@ -18,9 +18,6 @@
       "node": "20.19.4",
       "channel": "staging",
       "distribution": "store",
-      "env": {
-        "EXPO_PUBLIC_BACKEND_URL": "https://barber-backend-ten.vercel.app"
-      },
       "android": {
         "buildType": "app-bundle"
       },
@@ -34,9 +31,6 @@
       "node": "20.19.4",
       "channel": "production",
       "distribution": "store",
-      "env": {
-        "EXPO_PUBLIC_BACKEND_URL": "https://barber-backend-ten.vercel.app"
-      },
       "android": {
         "buildType": "app-bundle"
       },

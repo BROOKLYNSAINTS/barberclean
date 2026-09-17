@@ -8,19 +8,23 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
-  Linking
 } from 'react-native';
+
 import { useRouter } from 'expo-router';
 import { loginWithEmail } from '@/services/restAuth';
 import { getUserProfile } from '@/services/firebase';
 
 import {
+  initRevenueCat,
+  getCustomerInfo,
+} from '@/services/revenuecat';
+
+import {
   registerForPushNotifications,
-  saveNotificationToken
+  saveNotificationToken,
 } from '@/services/notifications';
 
 export default function LoginWithEmail() {
-
   const router = useRouter();
   const devBypass = false;
 
@@ -33,63 +37,111 @@ export default function LoginWithEmail() {
 
   useEffect(() => {
     if (devBypass) {
-      router.replace('/(app)/(customer)/');
+      router.replace('/(app)/(customer)');
     }
-  }, [devBypass]);
+  }, [devBypass, router]);
 
-  if (devBypass) return null;
+  if (devBypass) {
+    return null;
+  }
 
   const handleLogin = async () => {
+    if (!email.trim() || !password) {
+      setError('Please enter both email and password');
+      return;
+    }
 
     try {
-
-      if (!email || !password) {
-        setError('Please enter both email and password');
-        return;
-      }
-
       setLoading(true);
       setError('');
 
-      const user = await loginWithEmail(email, password);
+      /*
+       * Authenticate with Firebase.
+       */
+      const user = await loginWithEmail(email.trim(), password);
 
+      if (!user?.uid) {
+        throw new Error('Login succeeded but no user ID was returned.');
+      }
+
+      /*
+       * Load the user's Firestore profile.
+       */
       const profile = await getUserProfile(user.uid);
 
-      if (profile?.role === 'barber') {
-        router.replace('/(app)/(barber)/dashboard');
-      } else {
-        router.replace('/(app)/(customer)');
+      if (!profile) {
+        throw new Error('Your user profile could not be found.');
       }
 
-      const token = await registerForPushNotifications();
+      /*
+       * Register for notifications.
+       * A notification failure should not prevent login.
+       */
+      try {
+        const token = await registerForPushNotifications();
 
-      if (token) {
-        await saveNotificationToken(user.uid, token);
+        if (token) {
+          await saveNotificationToken(user.uid, token);
+        }
+      } catch (notificationError) {
+        console.log(
+          'Push notification registration failed:',
+          notificationError
+        );
       }
 
-    } catch (error) {
+      /*
+       * Barbers must have the correct active RevenueCat entitlement
+       * before entering the dashboard.
+       */
+      if (profile.role === 'barber') {
+        await initRevenueCat(user.uid);
 
-      console.log('Login error:', error);
-      setError('Login failed. Please try again.');
+        const customerInfo = await getCustomerInfo();
+
+        const entitlementId =
+          Platform.OS === 'ios'
+            ? 'barber_clean_pro'
+            : 'barber-clean Pro';
+
+        const subscriptionActive = Boolean(
+          customerInfo?.entitlements?.active?.[entitlementId]
+        );
+
+        if (subscriptionActive) {
+          router.replace('/(app)/(barber)/dashboard');
+        } else {
+          router.replace('/(app)/(barber)/barber-subscription');
+        }
+
+        return;
+      }
+
+      /*
+       * Regular customers do not require a barber subscription.
+       */
+      router.replace('/(app)/(customer)');
+
+    } catch (loginError) {
+      console.log('Login error:', loginError);
+
+      setError(
+        loginError?.message ||
+        'Login failed. Please check your email and password.'
+      );
 
     } finally {
-
       setLoading(false);
-
     }
-
   };
 
   return (
-
     <KeyboardAvoidingView
-      style={{ flex: 1 }}
+      style={styles.keyboardContainer}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
     >
-
       <ScrollView contentContainerStyle={styles.container}>
-
         <Text style={styles.appTitle}>ScheduleSync</Text>
 
         <Text style={styles.appDescription}>
@@ -99,10 +151,11 @@ export default function LoginWithEmail() {
 
         <Text style={styles.title}>Login</Text>
 
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        {error ? (
+          <Text style={styles.errorText}>{error}</Text>
+        ) : null}
 
         <View style={styles.inputContainer}>
-
           <Text style={styles.label}>Email</Text>
 
           <TextInput
@@ -112,91 +165,89 @@ export default function LoginWithEmail() {
             onChangeText={setEmail}
             keyboardType="email-address"
             autoCapitalize="none"
+            autoCorrect={false}
+            editable={!loading}
           />
-
         </View>
 
         <View style={styles.inputContainer}>
-
           <Text style={styles.label}>Password</Text>
 
           <View style={styles.passwordRow}>
-
             <TextInput
               style={[styles.input, styles.passwordInput]}
               placeholder="Enter your password"
               value={password}
               onChangeText={setPassword}
               secureTextEntry={!showPassword}
+              editable={!loading}
             />
 
             <TouchableOpacity
-              onPress={() => setShowPassword(prev => !prev)}
+              onPress={() => setShowPassword((previous) => !previous)}
               style={styles.eyeButton}
+              disabled={loading}
             >
               <Text style={styles.eyeText}>
                 {showPassword ? 'Hide' : 'Show'}
               </Text>
             </TouchableOpacity>
-
           </View>
-
         </View>
 
         <TouchableOpacity
           onPress={() => router.push('/forgot-password')}
           style={styles.forgotPassword}
+          disabled={loading}
         >
           <Text style={styles.link}>Forgot Password?</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={styles.button}
+          style={[
+            styles.button,
+            loading && styles.buttonDisabled,
+          ]}
           onPress={handleLogin}
           disabled={loading}
         >
           <Text style={styles.buttonText}>
-            {loading ? 'Logging in...' : 'Login'}
+            {loading ? 'Checking Account...' : 'Login'}
           </Text>
         </TouchableOpacity>
 
-        {/* CUSTOMER REGISTRATION */}
-
         <View style={styles.footer}>
-
           <Text>Don't have an account? </Text>
 
           <TouchableOpacity
             onPress={() => router.push('/register')}
+            disabled={loading}
           >
-            <Text style={styles.link}> Register</Text>
+            <Text style={styles.link}>Register</Text>
           </TouchableOpacity>
-
         </View>
-
-
       </ScrollView>
-
     </KeyboardAvoidingView>
-
   );
-
 }
 
 const styles = StyleSheet.create({
+  keyboardContainer: {
+    flex: 1,
+  },
 
   container: {
     flexGrow: 1,
     padding: 20,
     backgroundColor: '#fff',
-    justifyContent: 'center'
+    justifyContent: 'center',
   },
 
   appTitle: {
     fontSize: 28,
     fontWeight: 'bold',
     textAlign: 'center',
-    marginBottom: 10
+    marginBottom: 10,
   },
 
   appDescription: {
@@ -204,23 +255,23 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: 'bold',
     marginBottom: 10,
-    color: '#555'
+    color: '#555',
   },
 
   title: {
     fontSize: 22,
     fontWeight: 'bold',
     marginBottom: 20,
-    textAlign: 'center'
+    textAlign: 'center',
   },
 
   inputContainer: {
-    marginBottom: 15
+    marginBottom: 15,
   },
 
   label: {
     marginBottom: 5,
-    fontWeight: '500'
+    fontWeight: '500',
   },
 
   input: {
@@ -228,88 +279,65 @@ const styles = StyleSheet.create({
     borderColor: '#ddd',
     borderRadius: 8,
     padding: 12,
-    fontSize: 16
+    fontSize: 16,
   },
 
   passwordRow: {
     flexDirection: 'row',
-    alignItems: 'center'
+    alignItems: 'center',
   },
 
   passwordInput: {
-    flex: 1
+    flex: 1,
   },
 
   eyeButton: {
     marginLeft: 10,
     paddingHorizontal: 8,
-    paddingVertical: 6
+    paddingVertical: 6,
   },
 
   eyeText: {
     color: '#2196F3',
-    fontWeight: '500'
+    fontWeight: '500',
   },
 
   forgotPassword: {
     alignSelf: 'flex-end',
-    marginBottom: 15
+    marginBottom: 15,
   },
 
   button: {
     backgroundColor: '#2196F3',
     padding: 15,
     borderRadius: 8,
-    alignItems: 'center'
+    alignItems: 'center',
+  },
+
+  buttonDisabled: {
+    opacity: 0.6,
   },
 
   buttonText: {
     color: '#fff',
     fontSize: 16,
-    fontWeight: 'bold'
+    fontWeight: 'bold',
   },
 
   footer: {
     flexDirection: 'row',
     justifyContent: 'center',
-    marginTop: 20
+    marginTop: 20,
   },
 
   link: {
     color: '#2196F3',
-    fontWeight: 'bold'
-  },
-
-  barberBox: {
-    marginTop: 35,
-    padding: 15,
-    borderRadius: 10,
-    backgroundColor: '#f3f3f3',
-    alignItems: 'center'
-  },
-
-  barberTitle: {
-    fontSize: 20,
     fontWeight: 'bold',
-    marginBottom: 5
-  },
-
-  barberText: {
-    fontSize: 14,
-    textAlign: 'center',
-    marginBottom: 6
-  },
-
-  barberLink: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#007bff'
   },
 
   errorText: {
     color: 'red',
     marginBottom: 10,
-    textAlign: 'center'
-  }
-
+    textAlign: 'center',
+  },
 });

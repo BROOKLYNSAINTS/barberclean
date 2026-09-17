@@ -1,20 +1,56 @@
-import React from "react";
-import { View, Text, StyleSheet, TouchableOpacity, Alert } from "react-native";
+import React, { useEffect, useState } from "react";
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from "react-native";
 import { useRouter } from "expo-router";
 import theme from "@/styles/theme";
 
-const SUBSCRIPTION_URL = "https://barberreg.com/";
+import { getOfferings, purchasePackage } from "@/services/revenuecat";
 
 export default function BarberSubscriptionScreen() {
 
   const router = useRouter();
 
-  const openSubscriptionSetup = () => {
-    Alert.alert(
-      "Subscription Setup",
-      `In-app subscriptions are temporarily unavailable. Please complete setup at ${SUBSCRIPTION_URL}.`
-    );
+  const [loading, setLoading] = useState(true);
+  const [pkg, setPkg] = useState(null);
+
+  useEffect(() => {
+    loadOfferings();
+  }, []);
+
+  const loadOfferings = async () => {
+    try {
+      const offerings = await getOfferings();
+
+      if (offerings?.current?.availablePackages?.length > 0) {
+        setPkg(offerings.current.availablePackages[0]);
+      }
+
+    } catch (error) {
+      console.log("❌ Load offerings error:", error);
+    } finally {
+      setLoading(false);
+    }
   };
+
+  const handleSubscribe = async () => {
+    if (!pkg) return;
+
+    const customerInfo = await purchasePackage(pkg);
+
+    if (customerInfo) {
+      console.log("✅ Subscription active");
+
+      // Navigate after success
+      router.replace("/(app)/(barber)/dashboard");
+    }
+  };
+
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" />
+      </View>
+    );
+  }
 
   return (
 
@@ -22,39 +58,31 @@ export default function BarberSubscriptionScreen() {
 
       <Text style={styles.title}>Barber Subscription</Text>
 
-      <Text style={styles.price}>$50 / month</Text>
+      <Text style={styles.price}>
+        {pkg?.product?.priceString || "$50 / month"}
+      </Text>
 
       <Text style={styles.description}>
         Unlock barber tools and start receiving appointments.
       </Text>
 
       <View style={styles.features}>
-
         <Text style={styles.feature}>• Accept appointments</Text>
         <Text style={styles.feature}>• AI receptionist</Text>
         <Text style={styles.feature}>• SMS reminders</Text>
         <Text style={styles.feature}>• Customer management</Text>
         <Text style={styles.feature}>• Booking analytics</Text>
-
       </View>
 
       <TouchableOpacity
         style={styles.button}
-        onPress={openSubscriptionSetup}
+        onPress={handleSubscribe}
       >
-
-        <Text style={styles.buttonText}>Open Subscription Setup</Text>
-
+        <Text style={styles.buttonText}>Subscribe Now</Text>
       </TouchableOpacity>
 
-      <Text style={styles.note}>
-        In-app purchase support is being updated for the current app version.
-      </Text>
-
     </View>
-
   );
-
 }
 
 const styles = StyleSheet.create({
@@ -64,6 +92,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 30,
     backgroundColor: "#fff"
+  },
+
+  center: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center"
   },
 
   title: {
@@ -105,13 +139,6 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 18,
     fontWeight: "700"
-  },
-
-  note: {
-    marginTop: 20,
-    textAlign: "center",
-    fontSize: 12,
-    color: "#777"
   }
 
 });

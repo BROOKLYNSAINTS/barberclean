@@ -1,0 +1,170 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function userDoc(uid) {
+      return get(/databases/$(database)/documents/users/$(uid));
+    }
+
+    function isBarber(uid) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(uid))
+        && userDoc(uid).data.role == 'barber';
+    }
+
+    function isCustomer(uid) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(uid))
+        && userDoc(uid).data.role == 'customer';
+    }
+
+    function onlyFieldsChanged(allowed) {
+      return request.resource.data.diff(resource.data)
+        .changedKeys()
+        .hasOnly(allowed);
+    }
+
+    function hasRequiredAppointmentFields() {
+      return request.resource.data.keys().hasAll([
+        'barberId',
+        'customerId',
+        'serviceId',
+        'startAt',
+        'status',
+        'createdAt'
+      ]);
+    }
+
+    function isNewUser() {
+      return isSignedIn()
+        && request.auth.uid == request.resource.data.uid
+        && resource == null;
+    }
+
+    function isThreadParticipant(threadId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/chatThreads/$(threadId))
+        && request.auth.uid in get(/databases/$(database)/documents/chatThreads/$(threadId)).data.participants;
+    }
+
+    match /users/{uid} {
+      allow read: if isSignedIn();
+      allow create: if isNewUser() || isSelf(uid);
+      allow update, delete: if isSelf(uid);
+    }
+
+    match /users/{barberId}/services/{serviceId} {
+      allow read: if true;
+      allow create, update, delete:
+        if isBarber(barberId) && isSelf(barberId);
+    }
+
+    match /users/{barberId}/availability/{docId} {
+      allow read: if true;
+      allow create, update, delete:
+        if isBarber(barberId) && isSelf(barberId);
+    }
+
+    match /appointments/{id} {
+      allow create: if isSignedIn()
+        && hasRequiredAppointmentFields()
+        && (
+          (isCustomer(request.auth.uid)
+            && request.resource.data.customerId == request.auth.uid)
+          ||
+          (isBarber(request.resource.data.barberId)
+            && request.auth.uid == request.resource.data.barberId)
+        );
+
+      allow read: if isSignedIn()
+        && (
+          resource.data.customerId == request.auth.uid
+          || resource.data.barberId == request.auth.uid
+        );
+
+      allow update: if isSignedIn()
+        && (
+          (resource.data.customerId == request.auth.uid
+            && onlyFieldsChanged(['status','startAt']))
+          ||
+          (resource.data.barberId == request.auth.uid
+            && onlyFieldsChanged(['status','startAt','notes']))
+        );
+
+      allow delete: if isSignedIn()
+        && (
+          resource.data.customerId == request.auth.uid
+          || resource.data.barberId == request.auth.uid
+        );
+    }
+
+    match /chatThreads/{threadId} {
+      allow read, update, delete:
+        if isThreadParticipant(threadId);
+
+      allow create:
+        if isSignedIn()
+        && request.resource.data.participants is list
+        && request.auth.uid in request.resource.data.participants;
+
+      match /messages/{msgId} {
+        allow read:
+          if isThreadParticipant(threadId);
+
+        allow create:
+          if isThreadParticipant(threadId)
+          && request.resource.data.senderId == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.keys().hasAll(['senderId', 'text', 'createdAt']);
+
+        allow delete:
+          if isThreadParticipant(threadId);
+      }
+    }
+
+    match /chats/{chatId} {
+      allow read, update, delete:
+        if isSignedIn()
+        && (request.auth.uid in resource.data.participants);
+
+      allow create:
+        if isSignedIn()
+        && request.resource.data.participants is list
+        && request.auth.uid in request.resource.data.participants;
+
+      match /messages/{msgId} {
+        allow read, create:
+          if isSignedIn()
+          && request.auth.uid in
+            get(/databases/$(database)/documents/chats/$(chatId))
+              .data.participants;
+
+        allow delete:
+          if isSignedIn()
+          && request.auth.uid in
+            get(/databases/$(database)/documents/chats/$(chatId))
+              .data.participants;
+      }
+    }
+
+    match /bulletins/{id} {
+      allow read: if true;
+
+      allow create:
+        if isSignedIn()
+        && request.resource.data.authorId == request.auth.uid;
+
+      allow update, delete:
+        if isSignedIn()
+        && resource.data.authorId == request.auth.uid;
+    }
+  }
+}

@@ -5,15 +5,13 @@ import {
   CardField,
 } from "@stripe/stripe-react-native";
 import Constants from "expo-constants";
-import { auth, getUserProfile, updateUserProfile } from "@/services/firebase";
+import { auth } from "@/services/firebase";
 
 const extra = Constants.expoConfig?.extra;
 
 const STRIPE_PUBLISHABLE_KEY =
   process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY ||
   extra?.stripePublishableKey;
-
-const VERCEL_BYPASS = process.env.EXPO_PUBLIC_VERCEL_BYPASS_SECRET;
 
 function getBackendUrl() {
   return extra?.backendUrl || process.env.EXPO_PUBLIC_BACKEND_URL;
@@ -22,57 +20,7 @@ function getBackendUrl() {
 function buildBackendUrl(pathname) {
   const base = getBackendUrl();
   if (!base) throw new Error("Backend not configured");
-
-  const separator = pathname.includes("?") ? "&" : "?";
-  return `${base}${pathname}${
-    VERCEL_BYPASS ? `${separator}x-vercel-protection-bypass=${VERCEL_BYPASS}` : ""
-  }`;
-}
-
-/* =========================================================
-   🔥 UPDATED NORMALIZER (SUPPORT AUTO CHARGE)
-========================================================= */
-function normalizePaymentIntentPayload(data) {
-  // AUTO CHARGE CASE (TIP)
-  if (data?.paymentIntentId && !data?.clientSecret) {
-    return {
-      paymentIntentId: data.paymentIntentId,
-      isAutoCharge: true,
-    };
-  }
-
-  // PAYMENT SHEET CASE (SERVICE)
-  const customerId = data?.customerId || data?.customer || data?.stripeCustomerId;
-  const ephemeralKey = data?.ephemeralKey || data?.customerEphemeralKeySecret;
-  const clientSecret =
-    data?.clientSecret || data?.paymentIntentClientSecret || data?.setupIntentClientSecret;
-  const paymentIntentId = data?.paymentIntentId || data?.id || null;
-
-  return {
-    customerId,
-    ephemeralKey,
-    clientSecret,
-    paymentIntentId,
-    isAutoCharge: false,
-  };
-}
-
-async function parseResponsePayload(response) {
-  const raw = await response.text();
-  if (!raw) return { data: null, raw: "" };
-
-  try {
-    return { data: JSON.parse(raw), raw };
-  } catch {
-    return { data: null, raw };
-  }
-}
-
-function resolveBackendErrorMessage(data, raw, fallback) {
-  if (typeof data?.error === "string" && data.error) return data.error;
-  if (typeof data?.message === "string" && data.message) return data.message;
-  if (typeof raw === "string" && raw.trim()) return raw.trim().slice(0, 200);
-  return fallback;
+  return `${base}${pathname}`;
 }
 
 async function getAuthHeaders() {
@@ -87,60 +35,6 @@ async function getAuthHeaders() {
   }
 }
 
-/* =========================================================
-   🔥 UPDATED REQUEST HANDLER
-========================================================= */
-async function createPaymentIntentRequest(payload, fallbackMessage = "Payment setup failed") {
-  const headers = await getAuthHeaders();
-
-  const response = await fetch(buildBackendUrl("/api/create-payment-intent"), {
-    method: "POST",
-    headers,
-    body: JSON.stringify(payload),
-  });
-
-  const { data, raw } = await parseResponsePayload(response);
-
-  if (!response.ok) {
-    throw new Error(resolveBackendErrorMessage(data, raw, fallbackMessage));
-  }
-
-  const normalized = normalizePaymentIntentPayload(data);
-
-  // ✅ AUTO CHARGE (TIP)
-  if (normalized.isAutoCharge) {
-    return normalized;
-  }
-
-  // ✅ PAYMENT SHEET (SERVICE)
-  if (!normalized.customerId || !normalized.ephemeralKey || !normalized.clientSecret) {
-    throw new Error("Invalid payment intent response from backend");
-  }
-
-  return normalized;
-}
-
-/* =========================================================
-   CUSTOMER PROFILE
-========================================================= */
-async function resolveCustomerPaymentProfile() {
-  const user = auth.currentUser;
-  if (!user?.uid) throw new Error("Please sign in to continue");
-
-  const profile = (await getUserProfile(user.uid)) || {};
-
-  return {
-    userId: user.uid,
-    customerName: profile?.name || user.displayName || "Customer",
-    customerEmail: profile?.email || user.email,
-    stripeCustomerId: profile?.stripeCustomerId || null,
-    defaultPaymentMethodId: profile?.defaultPaymentMethodId || null,
-  };
-}
-
-/* =========================================================
-   INIT STRIPE
-========================================================= */
 export const initializeStripe = async () => {
   await initStripe({
     publishableKey: STRIPE_PUBLISHABLE_KEY,
@@ -150,65 +44,123 @@ export const initializeStripe = async () => {
 };
 
 /* =========================================================
-   TIP FLOW (AUTO CHARGE)
+   SETUP INTENT (CARD SAVE)
 ========================================================= */
-export const createTipPaymentSheet = async (
-  stripe,
-  userId,
-  amount,
-  appointmentId,
-  barberId
-) => {
-  const parsedAmount = Number(amount);
+export const presentSetupIntentSheet = async (stripe, params) => {
+  try {
+    const headers = await getAuthHeaders();
 
-  if (!parsedAmount || parsedAmount <= 0) {
-    throw new Error("Invalid tip amount");
+    const response = await fetch(
+      buildBackendUrl("/api/create-customer-setup-intent"),
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify(params),
+      }
+    );
+
+    const raw = await response.text();
+
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      console.error("❌ RAW SETUP RESPONSE:", raw);
+      throw new Error(raw || "Invalid server response");
+    }
+
+    if (!response.ok) {
+      throw new Error(data?.error || "SetupIntent failed");
+    }
+
+    const init = await stripe.initPaymentSheet({
+      merchantDisplayName: "ScheduleSync",
+      customerId: data.customerId,
+      customerEphemeralKeySecret: data.ephemeralKey,
+      setupIntentClientSecret: data.clientSecret,
+    });
+
+    if (init.error) throw new Error(init.error.message);
+
+    const present = await stripe.presentPaymentSheet();
+
+    if (present.error) {
+      if (present.error.code === "Canceled") {
+        return { success: false, canceled: true };
+      }
+      throw new Error(present.error.message);
+    }
+
+    // SECOND CALL → set default payment method
+    await fetch(buildBackendUrl("/api/create-customer-setup-intent"), {
+      method: "POST",
+      headers,
+      body: JSON.stringify(params),
+    });
+
+    return {
+      success: true,
+      stripeCustomerId: data.customerId,
+    };
+
+  } catch (error) {
+    console.error("SetupIntent error:", error);
+    return { success: false, error };
   }
-
-  const {
-    userId: resolvedUserId,
-    stripeCustomerId,
-    defaultPaymentMethodId,
-  } = await resolveCustomerPaymentProfile();
-
-  if (!stripeCustomerId || !defaultPaymentMethodId) {
-    throw new Error("Missing saved payment method");
-  }
-
-  return createPaymentIntentRequest({
-    customerId: resolvedUserId,
-    stripeCustomerId,
-    defaultPaymentMethodId,
-    barberId,
-    appointmentId,
-    amount: parsedAmount,
-    type: "tip",
-  });
 };
 
 /* =========================================================
-   SERVICE FLOW (PAYMENT SHEET)
+   SERVICE PAYMENT (FIXED JSON PARSE)
 ========================================================= */
 export const createAndPresentServicePaymentSheet = async (
   stripe,
   { appointmentId, barberId, amount, serviceName }
 ) => {
   try {
-    const parsedAmount = Number(amount);
+    const headers = await getAuthHeaders();
 
-    const paymentIntent = await createPaymentIntentRequest({
-      appointmentId,
-      barberId,
-      amount: parsedAmount,
-      type: "service",
-      description: serviceName,
-    });
+    const response = await fetch(
+      buildBackendUrl("/api/create-payment-intent"),
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          appointmentId,
+          barberId,
+          amount,
+          type: "service",
+          description: serviceName,
+
+          metadata: {
+            appointmentId,
+            barberId,
+            serviceName,
+          },
+        }),
+      }
+    );
+    const raw = await response.text();
+
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      console.error("❌ RAW PAYMENT RESPONSE:", raw);
+      throw new Error(raw || "Invalid server response");
+    }
+
+    if (!response.ok) {
+      throw new Error(data?.error || "Payment failed");
+    }
 
     const init = await stripe.initPaymentSheet({
       merchantDisplayName: "ScheduleSync",
-      customerId: paymentIntent.customerId,
-      customerEphemeralKeySecret: paymentIntent.ephemeralKey,
-      paymentIntentClientSecret: paymentIntent.clientSecret,
+      customerId: data.customerId,
+      customerEphemeralKeySecret: data.ephemeralKey,
+      paymentIntentClientSecret: data.clientSecret,
+
+      // 🔥 REQUIRED FOR 3D TO RETURN TO APP
+      returnURL: "barberclean://stripe-redirect",     
     });
 
     if (init.error) throw new Error(init.error.message);
@@ -228,14 +180,77 @@ export const createAndPresentServicePaymentSheet = async (
     console.error("Service payment error:", error);
     return { success: false, error };
   }
+};export const createTipPaymentSheet = async (
+  stripe,
+  appointmentId,
+  tipAmount
+) => {
+  try {
+    const headers = await getAuthHeaders();
+
+    const response = await fetch(
+      buildBackendUrl("/api/create-tip-payment-intent"),
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          appointmentId,
+          tipAmount,
+        }),
+      }
+    );
+
+    const raw = await response.text();
+
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      console.error("❌ RAW TIP RESPONSE:", raw);
+      throw new Error(raw || "Invalid server response");
+    }
+
+    if (!response.ok) {
+      throw new Error(data?.error || "Tip payment failed");
+    }
+
+    const init = await stripe.initPaymentSheet({
+      merchantDisplayName: "ScheduleSync",
+      customerId: data.customerId,
+      customerEphemeralKeySecret: data.ephemeralKey,
+      paymentIntentClientSecret: data.clientSecret,
+
+      // 🔥 REQUIRED FOR 3D RETURN
+      returnURL: "barberclean://stripe-redirect",   
+    
+    });
+
+    if (init.error) throw new Error(init.error.message);
+
+    const present = await stripe.presentPaymentSheet();
+
+    if (present.error) {
+      if (present.error.code === "Canceled") {
+        return { success: false, canceled: true };
+      }
+      throw new Error(present.error.message);
+    }
+
+    return { success: true };
+
+  } catch (error) {
+    console.error("Tip payment error:", error);
+    return { success: false, error };
+  }
 };
 
 export { useStripe, StripeProvider, CardField };
 
 export default {
   initializeStripe,
-  createTipPaymentSheet,
+  presentSetupIntentSheet,
   createAndPresentServicePaymentSheet,
+  createTipPaymentSheet,
   useStripe,
   StripeProvider,
   CardField,

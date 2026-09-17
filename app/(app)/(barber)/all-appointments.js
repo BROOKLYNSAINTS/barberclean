@@ -3,6 +3,29 @@ import { View, Text, FlatList, TouchableOpacity, ActivityIndicator } from 'react
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { auth, getBarberAppointments } from '@/services/firebase';
 
+// DATE PARSER
+function parseAppointmentDate(appt) {
+  if (!appt?.date || !appt?.time) return null;
+
+  try {
+    const cleanTime = String(appt.time).replace(/\s+/g, ' ').trim();
+    const [time, modifier] = cleanTime.split(' ');
+    if (!time || !modifier) return null;
+
+    let [hours, minutes] = time.split(':').map(Number);
+
+    const mod = modifier.toUpperCase();
+    if (mod === 'PM' && hours !== 12) hours += 12;
+    if (mod === 'AM' && hours === 12) hours = 0;
+
+    const [year, month, day] = appt.date.split('-').map(Number);
+
+    return new Date(year, month - 1, day, hours, minutes);
+  } catch {
+    return null;
+  }
+}
+
 export default function AllAppointmentsScreen() {
   const router = useRouter();
   const { filter } = useLocalSearchParams();
@@ -19,14 +42,21 @@ export default function AllAppointmentsScreen() {
           setAppts([]);
           return;
         }
+
         const data = (await getBarberAppointments(uid)) || [];
-        // sort ascending
-        data.sort((a, b) => new Date(`${a.date}T${a.time}`) - new Date(`${b.date}T${b.time}`));
+
+        data.sort((a, b) => {
+          const d1 = parseAppointmentDate(a);
+          const d2 = parseAppointmentDate(b);
+          return (d1?.getTime() || 0) - (d2?.getTime() || 0);
+        });
+
         setAppts(data);
       } finally {
         setLoading(false);
       }
     };
+
     run();
   }, []);
 
@@ -34,21 +64,27 @@ export default function AllAppointmentsScreen() {
     const f = String(filter || '').toLowerCase();
     if (!f) return appts;
 
-    const today = new Date().toISOString().split('T')[0];
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+    const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
 
-    if (f === 'today') return appts.filter(a => a.date === today);
+    if (f === 'today') {
+      return appts.filter(a => a.date === todayStr);
+    }
 
     if (f === 'upcoming') {
       return appts.filter(a => {
-        const dt = new Date(`${a.date}T${a.time}`);
-        return dt >= todayStart && a.date !== today;
+        const dt = parseAppointmentDate(a);
+        if (!dt) return false;
+
+        return dt > startOfToday && a.date !== todayStr;
       });
     }
 
     return appts;
   }, [appts, filter]);
+
+  const title = String(filter || 'all').toUpperCase();
 
   if (loading) {
     return (
@@ -60,10 +96,21 @@ export default function AllAppointmentsScreen() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#fff' }}>
-      <Text style={{ fontSize: 20, fontWeight: '700', padding: 16 }}>
-        {String(filter || 'all').toUpperCase()} Appointments
-      </Text>
+    <View style={{ flex: 1, backgroundColor: '#f0f2f5' }}>
+
+      {/* 🔥 HEADER BOX (MATCHES DASHBOARD STYLE) */}
+      <View
+        style={{
+          backgroundColor: '#fff',
+          padding: 16,
+          borderBottomWidth: 1,
+          borderColor: '#eee',
+        }}
+      >
+        <Text style={{ fontSize: 20, fontWeight: '700' }}>
+          {title} Appointments
+        </Text>
+      </View>
 
       <FlatList
         data={filtered}
@@ -73,8 +120,7 @@ export default function AllAppointmentsScreen() {
           <TouchableOpacity
             style={{
               padding: 14,
-              borderWidth: 1,
-              borderColor: '#eee',
+              backgroundColor: '#fff',
               borderRadius: 10,
               marginBottom: 12,
             }}
@@ -85,7 +131,9 @@ export default function AllAppointmentsScreen() {
               })
             }
           >
-            <Text style={{ fontSize: 16, fontWeight: '700' }}>{item.customerName || 'N/A'}</Text>
+            <Text style={{ fontSize: 16, fontWeight: '700' }}>
+              {item.customerName || 'N/A'}
+            </Text>
             <Text style={{ color: '#666', marginTop: 4 }}>
               {item.date} @ {item.time} • {item.serviceName || 'N/A'}
             </Text>
