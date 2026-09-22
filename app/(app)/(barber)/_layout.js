@@ -51,14 +51,20 @@ export default function BarberTabLayout() {
   const [firebaseUser, setFirebaseUser] =
     useState(auth.currentUser);
 
-  const [subscriptionActive, setSubscriptionActive] =
-    useState(false);
+  const [
+    subscriptionActive,
+    setSubscriptionActive,
+  ] = useState(false);
 
-  const [checkingSubscription, setCheckingSubscription] =
-    useState(true);
+  const [
+    checkingSubscription,
+    setCheckingSubscription,
+  ] = useState(true);
 
-  const [subscriptionError, setSubscriptionError] =
-    useState("");
+  const [
+    subscriptionError,
+    setSubscriptionError,
+  ] = useState("");
 
   /**
    * Check the currently authenticated barber's
@@ -67,6 +73,10 @@ export default function BarberTabLayout() {
   const checkSubscriptionAccess =
     useCallback(async (user) => {
       if (!user?.uid) {
+        console.log(
+          "🔎 REVENUECAT ACCESS CHECK: no Firebase user"
+        );
+
         setSubscriptionActive(false);
         setCheckingSubscription(false);
         return;
@@ -76,22 +86,90 @@ export default function BarberTabLayout() {
         setCheckingSubscription(true);
         setSubscriptionError("");
 
+        console.log(
+          "🔎 REVENUECAT ACCESS CHECK START",
+          {
+            firebaseUid: user.uid,
+            entitlementId: ENTITLEMENT_ID,
+          }
+        );
+
+        /*
+         * Initialize RevenueCat and identify it
+         * with the Firebase UID.
+         *
+         * initRevenueCat() itself returns CustomerInfo,
+         * but we perform one fresh getCustomerInfo()
+         * below so the diagnostic output represents
+         * the SDK's current state after identification.
+         */
         await initRevenueCat(user.uid);
 
         const customerInfo =
           await getCustomerInfo();
 
-        const isActive = Boolean(
+        const activeEntitlements =
+          Object.keys(
+            customerInfo?.entitlements?.active ||
+              {}
+          );
+
+        const allEntitlements =
+          Object.keys(
+            customerInfo?.entitlements?.all ||
+              {}
+          );
+
+        const activeEntitlement =
           customerInfo?.entitlements?.active?.[
             ENTITLEMENT_ID
-          ]
+          ];
+
+        const isActive =
+          Boolean(activeEntitlement);
+
+        console.log(
+          "🔎 REVENUECAT ACCESS CHECK RESULT",
+          {
+            firebaseUid: user.uid,
+
+            entitlementId:
+              ENTITLEMENT_ID,
+
+            revenueCatOriginalAppUserId:
+              customerInfo?.originalAppUserId ||
+              null,
+
+            activeEntitlements,
+
+            allEntitlements,
+
+            subscriptionActive:
+              isActive,
+
+            activeEntitlementIdentifier:
+              activeEntitlement?.identifier ||
+              null,
+
+            expirationDate:
+              activeEntitlement?.expirationDate ||
+              null,
+
+            willRenew:
+              activeEntitlement?.willRenew ??
+              null,
+
+            periodType:
+              activeEntitlement?.periodType ||
+              null,
+          }
         );
 
         setSubscriptionActive(isActive);
 
       } catch (error) {
         console.log(
-          "Barber subscription check failed:",
+          "❌ Barber subscription check failed:",
           error
         );
 
@@ -118,6 +196,17 @@ export default function BarberTabLayout() {
         async (user) => {
           setFirebaseUser(user);
 
+          console.log(
+            "🔎 BARBER AUTH STATE",
+            {
+              authenticated:
+                Boolean(user?.uid),
+
+              firebaseUid:
+                user?.uid || null,
+            }
+          );
+
           if (!user?.uid) {
             setSubscriptionActive(false);
             setCheckingSubscription(false);
@@ -134,12 +223,40 @@ export default function BarberTabLayout() {
             removeRevenueCatListener =
               addSubscriptionListener(
                 (activeEntitlement) => {
+                  const isActive =
+                    Boolean(
+                      activeEntitlement
+                    );
+
+                  console.log(
+                    "🔎 REVENUECAT ENTITLEMENT UPDATE",
+                    {
+                      entitlementId:
+                        ENTITLEMENT_ID,
+
+                      subscriptionActive:
+                        isActive,
+
+                      identifier:
+                        activeEntitlement
+                          ?.identifier ||
+                        null,
+
+                      expirationDate:
+                        activeEntitlement
+                          ?.expirationDate ||
+                        null,
+                    }
+                  );
+
                   setSubscriptionActive(
-                    Boolean(activeEntitlement)
+                    isActive
                   );
 
                   setSubscriptionError("");
-                  setCheckingSubscription(false);
+                  setCheckingSubscription(
+                    false
+                  );
                 }
               );
           }
@@ -184,8 +301,8 @@ export default function BarberTabLayout() {
   }
 
   /**
-   * Do not incorrectly redirect paid barbers when
-   * RevenueCat temporarily cannot be reached.
+   * Do not redirect a barber merely because
+   * RevenueCat could not be reached.
    */
   if (subscriptionError) {
     return (
@@ -193,7 +310,9 @@ export default function BarberTabLayout() {
         <Ionicons
           name="cloud-offline-outline"
           size={44}
-          color={theme.colors.textSecondary}
+          color={
+            theme.colors.textSecondary
+          }
         />
 
         <Text style={styles.errorTitle}>
@@ -212,7 +331,11 @@ export default function BarberTabLayout() {
             )
           }
         >
-          <Text style={styles.retryButtonText}>
+          <Text
+            style={
+              styles.retryButtonText
+            }
+          >
             Try Again
           </Text>
         </TouchableOpacity>
@@ -221,7 +344,7 @@ export default function BarberTabLayout() {
   }
 
   /**
-   * Inactive barbers may only access the
+   * Inactive barbers may only access
    * subscription-related screens.
    */
   const inactiveScreenAllowed =
@@ -233,6 +356,16 @@ export default function BarberTabLayout() {
     !subscriptionActive &&
     !inactiveScreenAllowed
   ) {
+    console.log(
+      "⚠️ BARBER ACCESS BLOCKED",
+      {
+        currentScreen,
+        entitlementId:
+          ENTITLEMENT_ID,
+        subscriptionActive,
+      }
+    );
+
     return (
       <Redirect
         href="/(app)/(barber)/barber-subscription"
@@ -244,15 +377,20 @@ export default function BarberTabLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
+
         tabBarActiveTintColor:
           theme.colors.primary,
+
         tabBarInactiveTintColor:
           theme.colors.textSecondary,
+
         tabBarStyle: {
           backgroundColor:
             theme.colors.card,
+
           borderTopColor:
             theme.colors.border,
+
           height: 70,
           paddingBottom: 10,
         },
@@ -262,6 +400,7 @@ export default function BarberTabLayout() {
         name="dashboard"
         options={{
           title: "Dashboard",
+
           tabBarIcon: ({
             color,
             size,
@@ -279,6 +418,7 @@ export default function BarberTabLayout() {
         name="all-appointments"
         options={{
           title: "Appointments",
+
           tabBarIcon: ({
             color,
             size,
@@ -296,6 +436,7 @@ export default function BarberTabLayout() {
         name="availability"
         options={{
           title: "Availability",
+
           tabBarIcon: ({
             color,
             size,
@@ -313,6 +454,7 @@ export default function BarberTabLayout() {
         name="manage-services"
         options={{
           title: "Services",
+
           tabBarIcon: ({
             color,
             size,
@@ -330,6 +472,7 @@ export default function BarberTabLayout() {
         name="network"
         options={{
           title: "Network",
+
           tabBarIcon: ({
             color,
             size,
@@ -347,6 +490,7 @@ export default function BarberTabLayout() {
         name="bulletin"
         options={{
           title: "Bulletin Board",
+
           tabBarIcon: ({
             color,
             size,
@@ -364,6 +508,7 @@ export default function BarberTabLayout() {
         name="edit-profile"
         options={{
           title: "Profile",
+
           tabBarIcon: ({
             color,
             size,
@@ -381,6 +526,7 @@ export default function BarberTabLayout() {
         name="chat-assistant"
         options={{
           title: "Assistant",
+
           tabBarIcon: ({
             color,
             size,
@@ -466,7 +612,8 @@ const styles = StyleSheet.create({
   statusText: {
     marginTop: 12,
     fontSize: 15,
-    color: theme.colors.textSecondary,
+    color:
+      theme.colors.textSecondary,
     textAlign: "center",
   },
 
@@ -482,7 +629,8 @@ const styles = StyleSheet.create({
     marginTop: 10,
     fontSize: 15,
     lineHeight: 21,
-    color: theme.colors.textSecondary,
+    color:
+      theme.colors.textSecondary,
     textAlign: "center",
   },
 
@@ -491,7 +639,8 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
     paddingHorizontal: 24,
     borderRadius: 8,
-    backgroundColor: theme.colors.primary,
+    backgroundColor:
+      theme.colors.primary,
   },
 
   retryButtonText: {
