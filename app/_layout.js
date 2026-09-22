@@ -47,16 +47,19 @@ export default function Layout() {
     /*
      * Complete the Stripe Connect return flow.
      *
-     * IMPORTANT:
      * The backend is responsible for verifying Stripe onboarding
-     * and updating Firestore. The app does not mark onboarding
-     * complete itself.
+     * and updating Firestore. The app only verifies that state
+     * before navigating to the barber dashboard.
      */
     const processStripeReturn = async (url, user) => {
       if (!url || !url.includes('connect-return')) {
         return;
       }
 
+      /*
+       * Firebase may still be restoring authentication when
+       * iOS sends the deep link to the app.
+       */
       if (!user?.uid) {
         console.log(
           'Stripe Connect return waiting for Firebase authentication'
@@ -65,6 +68,12 @@ export default function Layout() {
         pendingStripeUrl.current = url;
         return;
       }
+
+      /*
+       * Keep the URL pending until Firestore confirms that
+       * Stripe onboarding has completed.
+       */
+      pendingStripeUrl.current = url;
 
       try {
         console.log(
@@ -77,15 +86,20 @@ export default function Layout() {
           user.uid
         );
 
-        /*
-         * Give the backend/Firestore write a short opportunity
-         * to become visible to the app.
-         */
         let onboardingComplete = false;
 
+        /*
+         * Give Firestore a short opportunity to reflect the
+         * backend update before giving up.
+         */
         for (let attempt = 0; attempt < 5; attempt += 1) {
           const snapshot = await getDoc(userRef);
           const data = snapshot.data();
+
+          console.log(
+            `Stripe verification attempt ${attempt + 1}:`,
+            data?.stripeConnectOnboardingComplete
+          );
 
           if (
             data?.stripeConnectOnboardingComplete === true
@@ -111,6 +125,10 @@ export default function Layout() {
           return;
         }
 
+        /*
+         * Firestore has confirmed onboarding.
+         * Clear the pending URL and go directly to Dashboard.
+         */
         pendingStripeUrl.current = null;
 
         console.log(
@@ -129,7 +147,12 @@ export default function Layout() {
     };
 
     /*
-     * Initialize RevenueCat only for authenticated barber accounts.
+     * Watch Firebase authentication.
+     *
+     * IMPORTANT:
+     * Stripe return processing happens BEFORE RevenueCat
+     * initialization so a RevenueCat delay or error cannot
+     * trap the barber on the Stripe onboarding spinner.
      */
     const unsubscribeAuth = onAuthStateChanged(
       auth,
@@ -175,25 +198,42 @@ export default function Layout() {
             return;
           }
 
-          await initRevenueCat(user.uid);
-
-          console.log(
-            `RevenueCat synchronized with barber: ${user.uid}`
-          );
-
           /*
-           * Stripe may have returned before Firebase restored
-           * the authenticated user. Process that pending return now.
+           * If Stripe returned while Firebase authentication
+           * was being restored, finish the Stripe return NOW.
+           *
+           * Do not wait for RevenueCat.
            */
           if (pendingStripeUrl.current) {
+            console.log(
+              'Processing pending Stripe return after Firebase authentication'
+            );
+
             await processStripeReturn(
               pendingStripeUrl.current,
               user
             );
           }
+
+          /*
+           * RevenueCat synchronization is independent of
+           * Stripe Connect return navigation.
+           */
+          try {
+            await initRevenueCat(user.uid);
+
+            console.log(
+              `RevenueCat synchronized with barber: ${user.uid}`
+            );
+          } catch (revenueCatError) {
+            console.log(
+              'RevenueCat initialization failed after authentication:',
+              revenueCatError
+            );
+          }
         } catch (error) {
           console.log(
-            'RevenueCat authentication synchronization failed:',
+            'Authentication/profile synchronization failed:',
             error
           );
         }
@@ -201,7 +241,7 @@ export default function Layout() {
     );
 
     /*
-     * Handle Stripe return while the app is already running.
+     * Handle a Stripe deep link while the app is already running.
      */
     const handleDeepLink = async (event) => {
       const url = event?.url;
@@ -231,7 +271,8 @@ export default function Layout() {
       );
 
     /*
-     * Handle Stripe return that launched the app.
+     * Handle a Stripe return that launches the app from a
+     * closed/background state.
      */
     const processInitialUrl = async () => {
       try {
@@ -239,6 +280,11 @@ export default function Layout() {
           await Linking.getInitialURL();
 
         if (initialUrl) {
+          console.log(
+            'Initial deep link:',
+            initialUrl
+          );
+
           await handleDeepLink({
             url: initialUrl,
           });
