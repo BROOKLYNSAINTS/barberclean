@@ -18,7 +18,7 @@ let currentRevenueCatUserId = null;
 
 
 /**
- * Platform-specific entitlement identifier.
+ * Platform-specific RevenueCat entitlement identifier.
  */
 export const ENTITLEMENT_ID =
   Platform.OS === "ios"
@@ -37,8 +37,15 @@ const getRevenueCatApiKey = () => {
 
 
 /**
- * Initialize RevenueCat and identify the currently
- * authenticated Firebase user.
+ * Initialize RevenueCat using the authenticated
+ * Firebase UID as the RevenueCat App User ID.
+ *
+ * IMPORTANT:
+ * ScheduleSync uses the Firebase UID as the permanent
+ * RevenueCat identity for each authenticated user.
+ *
+ * We do not intentionally create anonymous RevenueCat
+ * customers during normal authenticated app use.
  */
 export const initRevenueCat = async (userId) => {
   try {
@@ -50,70 +57,109 @@ export const initRevenueCat = async (userId) => {
       );
     }
 
+    if (!userId) {
+      throw new Error(
+        "Cannot initialize RevenueCat without a Firebase user ID."
+      );
+    }
+
     Purchases.setLogLevel(LOG_LEVEL.VERBOSE);
 
     /*
-     * Configure the RevenueCat SDK only once.
-     * User identification is handled separately below.
+     * First RevenueCat initialization for this app session.
+     *
+     * Supply the Firebase UID immediately so RevenueCat
+     * uses it as the App User ID instead of intentionally
+     * starting with a new anonymous customer.
      */
     if (!isConfigured) {
       Purchases.configure({
         apiKey: API_KEY,
+        appUserID: userId,
       });
 
       isConfigured = true;
-
-      console.log(
-        `✅ RevenueCat configured (${Platform.OS})`
-      );
-    }
-
-    if (!userId) {
-      console.log(
-        "⚠️ RevenueCat initialized without a Firebase user ID"
-      );
-
-      return await Purchases.getCustomerInfo();
-    }
-
-    /*
-     * If a different Firebase user signs in during the same
-     * app session, sign out the previous RevenueCat identity.
-     */
-    if (
-      currentRevenueCatUserId &&
-      currentRevenueCatUserId !== userId
-    ) {
-      await Purchases.logOut();
-
-      currentRevenueCatUserId = null;
-
-      console.log(
-        "✅ Previous RevenueCat user signed out"
-      );
-    }
-
-    /*
-     * Identify the current Firebase user in RevenueCat.
-     */
-    if (currentRevenueCatUserId !== userId) {
-      const { customerInfo, created } =
-        await Purchases.logIn(userId);
-
       currentRevenueCatUserId = userId;
 
       console.log(
-        `✅ RevenueCat user identified: ${userId}`,
-        { created }
+        `✅ RevenueCat configured for Firebase user: ${userId}`
+      );
+
+      const customerInfo =
+        await Purchases.getCustomerInfo();
+
+      console.log(
+        "🔎 RevenueCat configured customer",
+        {
+          firebaseUid: userId,
+          originalAppUserId:
+            customerInfo?.originalAppUserId,
+          activeEntitlements:
+            Object.keys(
+              customerInfo?.entitlements?.active || {}
+            ),
+        }
       );
 
       return customerInfo;
     }
 
     /*
-     * The correct user is already identified.
+     * RevenueCat is already configured.
+     *
+     * If a different Firebase account signs in on this
+     * device, switch directly to that Firebase UID.
+     *
+     * IMPORTANT:
+     * Do NOT call Purchases.logOut() before logIn().
+     * RevenueCat logOut() creates a new anonymous
+     * RevenueCat App User ID.
      */
-    return await Purchases.getCustomerInfo();
+    if (currentRevenueCatUserId !== userId) {
+      const {
+        customerInfo,
+        created,
+      } = await Purchases.logIn(userId);
+
+      currentRevenueCatUserId = userId;
+
+      console.log(
+        `✅ RevenueCat switched to Firebase user: ${userId}`,
+        {
+          created,
+          originalAppUserId:
+            customerInfo?.originalAppUserId,
+          activeEntitlements:
+            Object.keys(
+              customerInfo?.entitlements?.active || {}
+            ),
+        }
+      );
+
+      return customerInfo;
+    }
+
+    /*
+     * RevenueCat is already using the correct
+     * Firebase UID.
+     */
+    const customerInfo =
+      await Purchases.getCustomerInfo();
+
+    console.log(
+      "🔎 RevenueCat current customer",
+      {
+        firebaseUid: userId,
+        originalAppUserId:
+          customerInfo?.originalAppUserId,
+        activeEntitlements:
+          Object.keys(
+            customerInfo?.entitlements?.active || {}
+          ),
+      }
+    );
+
+    return customerInfo;
 
   } catch (error) {
     console.log(
@@ -127,23 +173,26 @@ export const initRevenueCat = async (userId) => {
 
 
 /**
- * Sign out the current RevenueCat user.
+ * Clear local RevenueCat user tracking when the
+ * Firebase user signs out.
  *
- * Call this when the Firebase user signs out.
+ * IMPORTANT:
+ * We intentionally do NOT call Purchases.logOut().
+ *
+ * Calling RevenueCat logOut() creates another
+ * anonymous RevenueCat App User ID.
+ *
+ * When another authenticated Firebase user signs in,
+ * initRevenueCat() will switch RevenueCat directly
+ * to that Firebase UID with Purchases.logIn().
  */
 export const logoutRevenueCat = async () => {
   try {
-    if (!isConfigured) {
-      return;
-    }
-
-    if (currentRevenueCatUserId) {
-      await Purchases.logOut();
-    }
-
     currentRevenueCatUserId = null;
 
-    console.log("✅ RevenueCat user signed out");
+    console.log(
+      "✅ RevenueCat local user state cleared"
+    );
 
   } catch (error) {
     console.log(
@@ -166,13 +215,27 @@ export const addSubscriptionListener = (callback) => {
         ENTITLEMENT_ID
       ];
 
+    console.log(
+      "🔔 RevenueCat entitlement update",
+      {
+        originalAppUserId:
+          customerInfo?.originalAppUserId,
+        entitlementId:
+          ENTITLEMENT_ID,
+        entitlementActive:
+          Boolean(activeEntitlement),
+      }
+    );
+
     callback(activeEntitlement || null);
   };
 
-  Purchases.addCustomerInfoUpdateListener(listener);
+  Purchases.addCustomerInfoUpdateListener(
+    listener
+  );
 
   /*
-   * Return a cleanup function for React useEffect.
+   * Cleanup function for React useEffect.
    */
   return () => {
     Purchases.removeCustomerInfoUpdateListener(
@@ -198,6 +261,18 @@ export const getOfferings = async () => {
       return null;
     }
 
+    console.log(
+      "✅ RevenueCat offering loaded",
+      {
+        offeringIdentifier:
+          offerings.current.identifier,
+        availablePackages:
+          offerings.current.availablePackages?.map(
+            (pkg) => pkg.identifier
+          ) || [],
+      }
+    );
+
     return offerings;
 
   } catch (error) {
@@ -222,8 +297,9 @@ export const purchasePackage = async (pkg) => {
   }
 
   try {
-    const { customerInfo } =
-      await Purchases.purchasePackage(pkg);
+    const {
+      customerInfo,
+    } = await Purchases.purchasePackage(pkg);
 
     const activeEntitlement =
       customerInfo?.entitlements?.active?.[
@@ -233,8 +309,16 @@ export const purchasePackage = async (pkg) => {
     console.log(
       "💳 RevenueCat purchase completed",
       {
+        originalAppUserId:
+          customerInfo?.originalAppUserId,
+        entitlementId:
+          ENTITLEMENT_ID,
         entitlementActive:
           Boolean(activeEntitlement),
+        activeEntitlements:
+          Object.keys(
+            customerInfo?.entitlements?.active || {}
+          ),
       }
     );
 
@@ -264,7 +348,22 @@ export const purchasePackage = async (pkg) => {
  */
 export const getCustomerInfo = async () => {
   try {
-    return await Purchases.getCustomerInfo();
+    const customerInfo =
+      await Purchases.getCustomerInfo();
+
+    console.log(
+      "🔎 RevenueCat customer information",
+      {
+        originalAppUserId:
+          customerInfo?.originalAppUserId,
+        activeEntitlements:
+          Object.keys(
+            customerInfo?.entitlements?.active || {}
+          ),
+      }
+    );
+
+    return customerInfo;
 
   } catch (error) {
     console.log(
@@ -279,14 +378,36 @@ export const getCustomerInfo = async () => {
 
 /**
  * Restore Apple or Google purchases.
+ *
+ * RevenueCat will attempt to associate the store
+ * receipt with the currently identified Firebase
+ * RevenueCat user according to the project's
+ * configured transfer behavior.
  */
 export const restorePurchases = async () => {
   try {
     const customerInfo =
       await Purchases.restorePurchases();
 
+    const activeEntitlement =
+      customerInfo?.entitlements?.active?.[
+        ENTITLEMENT_ID
+      ];
+
     console.log(
-      "🔄 RevenueCat purchases restored"
+      "🔄 RevenueCat purchases restored",
+      {
+        originalAppUserId:
+          customerInfo?.originalAppUserId,
+        entitlementId:
+          ENTITLEMENT_ID,
+        entitlementActive:
+          Boolean(activeEntitlement),
+        activeEntitlements:
+          Object.keys(
+            customerInfo?.entitlements?.active || {}
+          ),
+      }
     );
 
     return customerInfo;
@@ -312,7 +433,9 @@ export const openManageSubscriptions = async () => {
         ? "https://apps.apple.com/account/subscriptions"
         : "https://play.google.com/store/account/subscriptions";
 
-    await Linking.openURL(subscriptionUrl);
+    await Linking.openURL(
+      subscriptionUrl
+    );
 
   } catch (error) {
     console.log(
